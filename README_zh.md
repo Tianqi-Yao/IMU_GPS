@@ -68,7 +68,6 @@ python serial_bridge.py --port /dev/ttyACM0 --baud 921600 --ws-port 8765
 浏览器访问：`http://localhost:8765`
 
 手机访问（局域网）：`http://<电脑IP>:8765`
-> 注意：手机使用"Sync Phone Compass"功能需要 HTTPS 或 localhost。
 
 ---
 
@@ -88,7 +87,6 @@ python serial_bridge.py --port /dev/ttyACM0 --baud 921600 --ws-port 8765
 
 | 按钮 | 功能 |
 |------|------|
-| **Sync Phone Compass** | 读取手机内置罗盘，将当前 IMU heading 与真实北方对齐（iOS 需授权） |
 | 输入框 + **Set Heading** | 手动输入当前方向角（0–359°），将此方向标记为指定角度 |
 | **Clear North** | 清除北向校准偏移，恢复原始 heading |
 | **Reset View** | 复位 3D 相机到初始视角 |
