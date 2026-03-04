@@ -1,0 +1,270 @@
+2026-03-04 13:55:14,136 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 13:55:14,137 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 13:55:14,137 [ERROR] Cannot open serial port /dev/ttyACM0: [Errno 16] could not open port /dev/ttyACM0: [Errno 16] Device or resource busy: '/dev/ttyACM0'. Retrying in 3s.
+2026-03-04 13:55:14,137 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 13:55:14,137 [INFO] Open browser at http://localhost:8765
+2026-03-04 13:55:14,137 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 13:55:14,148 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 13:55:14,148 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 13:55:15,643 [INFO] connection open
+2026-03-04 13:55:15,643 [INFO] WebSocket client connected: ('127.0.0.1', 60448)
+2026-03-04 13:55:17,140 [ERROR] Cannot open serial port /dev/ttyACM0: [Errno 16] could not open port /dev/ttyACM0: [Errno 16] Device or resource busy: '/dev/ttyACM0'. Retrying in 3s.
+2026-03-04 13:55:20,143 [ERROR] Cannot open serial port /dev/ttyACM0: [Errno 16] could not open port /dev/ttyACM0: [Errno 16] Device or resource busy: '/dev/ttyACM0'. Retrying in 3s.
+2026-03-04 13:55:23,146 [ERROR] Cannot open serial port /dev/ttyACM0: [Errno 16] could not open port /dev/ttyACM0: [Errno 16] Device or resource busy: '/dev/ttyACM0'. Retrying in 3s.
+2026-03-04 13:55:26,149 [ERROR] Cannot open serial port /dev/ttyACM0: [Errno 16] could not open port /dev/ttyACM0: [Errno 16] Device or resource busy: '/dev/ttyACM0'. Retrying in 3s.
+2026-03-04 13:55:29,152 [ERROR] Cannot open serial port /dev/ttyACM0: [Errno 16] could not open port /dev/ttyACM0: [Errno 16] Device or resource busy: '/dev/ttyACM0'. Retrying in 3s.
+2026-03-04 13:55:32,155 [ERROR] Cannot open serial port /dev/ttyACM0: [Errno 16] could not open port /dev/ttyACM0: [Errno 16] Device or resource busy: '/dev/ttyACM0'. Retrying in 3s.
+2026-03-04 13:55:35,158 [ERROR] Cannot open serial port /dev/ttyACM0: [Errno 16] could not open port /dev/ttyACM0: [Errno 16] Device or resource busy: '/dev/ttyACM0'. Retrying in 3s.
+2026-03-04 13:55:38,161 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 13:55:46,004 [INFO] WebSocket client disconnected: ('127.0.0.1', 60448)
+2026-03-04 13:55:46,004 [INFO] server closing
+2026-03-04 13:55:46,004 [INFO] server closed
+2026-03-04 13:55:46,004 [INFO] Bridge stopped by user.
+2026-03-04 13:55:46,835 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 13:55:46,835 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 13:55:46,836 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 13:55:46,836 [INFO] Open browser at http://localhost:8765
+2026-03-04 13:55:46,836 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 13:55:46,836 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 13:55:46,842 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 13:55:46,842 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 13:55:48,310 [INFO] connection open
+2026-03-04 13:55:48,310 [INFO] WebSocket client connected: ('127.0.0.1', 56422)
+2026-03-04 13:55:48,765 [INFO] connection open
+2026-03-04 13:55:48,765 [INFO] WebSocket client connected: ('127.0.0.1', 56438)
+2026-03-04 13:55:55,689 [ERROR] Serial read error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2026-03-04 13:55:58,691 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 13:56:25,670 [ERROR] Serial read error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2026-03-04 13:56:28,673 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 13:57:18,741 [INFO] WebSocket client disconnected: ('127.0.0.1', 56438)
+2026-03-04 13:57:18,741 [INFO] WebSocket client disconnected: ('127.0.0.1', 56422)
+2026-03-04 13:57:18,741 [INFO] server closing
+2026-03-04 13:57:18,741 [INFO] server closed
+2026-03-04 13:57:18,741 [INFO] Bridge stopped by user.
+2026-03-04 13:57:19,588 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 13:57:19,588 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 13:57:19,588 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 13:57:19,588 [INFO] Open browser at http://localhost:8765
+2026-03-04 13:57:19,589 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 13:57:19,589 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 13:57:19,595 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 13:57:19,595 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 13:57:20,761 [INFO] connection open
+2026-03-04 13:57:20,761 [INFO] WebSocket client connected: ('127.0.0.1', 56116)
+2026-03-04 13:57:20,773 [INFO] connection open
+2026-03-04 13:57:20,773 [INFO] WebSocket client connected: ('127.0.0.1', 56132)
+2026-03-04 13:57:20,872 [INFO] connection open
+2026-03-04 13:57:20,872 [INFO] WebSocket client connected: ('127.0.0.1', 56144)
+2026-03-04 13:57:22,761 [INFO] WebSocket client disconnected: ('127.0.0.1', 56116)
+2026-03-04 13:57:23,107 [INFO] WebSocket client disconnected: ('127.0.0.1', 56132)
+2026-03-04 13:57:35,653 [INFO] WebSocket client disconnected: ('127.0.0.1', 56144)
+2026-03-04 13:57:35,653 [INFO] server closing
+2026-03-04 13:57:35,653 [INFO] server closed
+2026-03-04 13:57:35,653 [INFO] Bridge stopped by user.
+2026-03-04 13:57:40,209 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 13:57:40,209 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 13:57:40,210 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 13:57:40,210 [INFO] Open browser at http://localhost:8765
+2026-03-04 13:57:40,210 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 13:57:40,210 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 13:57:40,216 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 13:57:40,216 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 13:57:41,484 [INFO] connection open
+2026-03-04 13:57:41,484 [INFO] WebSocket client connected: ('127.0.0.1', 48358)
+2026-03-04 13:57:51,050 [ERROR] Serial read error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2026-03-04 13:57:54,052 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:00:34,504 [INFO] WebSocket client disconnected: ('127.0.0.1', 48358)
+2026-03-04 14:00:34,504 [INFO] server closing
+2026-03-04 14:00:34,504 [INFO] server closed
+2026-03-04 14:00:34,504 [INFO] Bridge stopped by user.
+2026-03-04 14:06:56,072 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 14:06:56,073 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 14:06:56,073 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 14:06:56,073 [INFO] Open browser at http://localhost:8765
+2026-03-04 14:06:56,073 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:06:56,073 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 14:06:56,080 [ERROR] Task exception was never retrieved
+future: <Task finished name='Task-2' coro=<broadcaster() done, defined at /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/serial_bridge.py:163> exception=UnboundLocalError("local variable 'connected_clients' referenced before assignment")>
+Traceback (most recent call last):
+  File "/home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/serial_bridge.py", line 167, in broadcaster
+    if not connected_clients:
+UnboundLocalError: local variable 'connected_clients' referenced before assignment
+2026-03-04 14:06:56,080 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 14:06:56,080 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 14:06:57,358 [INFO] connection open
+2026-03-04 14:06:57,358 [INFO] WebSocket client connected: ('127.0.0.1', 51976)
+2026-03-04 14:07:00,796 [INFO] connection open
+2026-03-04 14:07:00,796 [INFO] WebSocket client connected: ('127.0.0.1', 51982)
+2026-03-04 14:08:40,206 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 14:08:40,206 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 14:08:40,207 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 14:08:40,207 [INFO] Open browser at http://localhost:8765
+2026-03-04 14:08:40,207 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:08:40,207 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 14:08:40,214 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 14:08:40,214 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 14:08:40,240 [ERROR] Task exception was never retrieved
+future: <Task finished name='Task-2' coro=<broadcaster() done, defined at /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/serial_bridge.py:163> exception=UnboundLocalError("local variable 'connected_clients' referenced before assignment")>
+Traceback (most recent call last):
+  File "/home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/serial_bridge.py", line 167, in broadcaster
+    if not connected_clients:
+UnboundLocalError: local variable 'connected_clients' referenced before assignment
+2026-03-04 14:08:40,308 [INFO] connection open
+2026-03-04 14:08:40,308 [INFO] WebSocket client connected: ('127.0.0.1', 43510)
+2026-03-04 14:08:40,763 [INFO] connection open
+2026-03-04 14:08:40,763 [INFO] WebSocket client connected: ('127.0.0.1', 43518)
+2026-03-04 14:08:41,480 [INFO] connection open
+2026-03-04 14:08:41,480 [INFO] WebSocket client connected: ('127.0.0.1', 43534)
+2026-03-04 14:08:43,027 [INFO] WebSocket client disconnected: ('127.0.0.1', 43518)
+2026-03-04 14:08:43,353 [INFO] WebSocket client disconnected: ('127.0.0.1', 43510)
+2026-03-04 14:08:44,152 [INFO] WebSocket client disconnected: ('127.0.0.1', 43534)
+2026-03-04 14:08:45,677 [INFO] server closing
+2026-03-04 14:08:45,677 [INFO] server closed
+2026-03-04 14:08:45,699 [INFO] Bridge stopped by user.
+2026-03-04 14:08:48,137 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 14:08:48,137 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 14:08:48,137 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 14:08:48,137 [INFO] Open browser at http://localhost:8765
+2026-03-04 14:08:48,137 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:08:48,137 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 14:08:48,144 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 14:08:48,144 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 14:08:48,178 [ERROR] Task exception was never retrieved
+future: <Task finished name='Task-2' coro=<broadcaster() done, defined at /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/serial_bridge.py:163> exception=UnboundLocalError("local variable 'connected_clients' referenced before assignment")>
+Traceback (most recent call last):
+  File "/home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/serial_bridge.py", line 167, in broadcaster
+    if not connected_clients:
+UnboundLocalError: local variable 'connected_clients' referenced before assignment
+2026-03-04 14:08:49,396 [INFO] connection open
+2026-03-04 14:08:49,396 [INFO] WebSocket client connected: ('127.0.0.1', 32846)
+2026-03-04 14:09:04,442 [WARNING] JSON parse error: Expecting ',' delimiter: line 1 column 257 (char 256) | raw: {"ts":148072,"rot":{"qi":0.1284,"qj":0.0438,"qk":0.4276,"qr":0.8937,"acc":1.7942
+2026-03-04 14:11:27,061 [INFO] WebSocket client disconnected: ('127.0.0.1', 32846)
+2026-03-04 14:11:27,114 [INFO] server closing
+2026-03-04 14:11:27,138 [INFO] server closed
+2026-03-04 14:11:27,153 [INFO] Bridge stopped by user.
+2026-03-04 14:15:21,754 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 14:15:21,754 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 14:15:21,754 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 14:15:21,754 [INFO] Open browser at http://localhost:8765
+2026-03-04 14:15:21,754 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:15:21,755 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 14:15:21,761 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 14:15:21,762 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 14:15:22,038 [INFO] connection open
+2026-03-04 14:15:22,038 [INFO] WebSocket client connected: ('127.0.0.1', 34462)
+2026-03-04 14:15:23,034 [INFO] connection open
+2026-03-04 14:15:23,034 [INFO] WebSocket client connected: ('127.0.0.1', 34466)
+2026-03-04 14:18:44,479 [ERROR] Serial read error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2026-03-04 14:18:47,483 [ERROR] Cannot open serial port /dev/ttyACM0: [Errno 2] could not open port /dev/ttyACM0: [Errno 2] No such file or directory: '/dev/ttyACM0'. Retrying in 3s.
+2026-03-04 14:18:50,486 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:18:52,907 [ERROR] Serial read error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2026-03-04 14:18:55,910 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:19:00,312 [ERROR] Serial read error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2026-03-04 14:19:03,316 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:19:10,825 [WARNING] JSON parse error: Extra data: line 1 column 111 (char 110) | raw: {"ts":10275,"rot":{"qi":0.1681,"qj":-0.3015,"qk":0.7328,"qr":0.5864,"acc":1.1521
+2026-03-04 14:19:11,178 [ERROR] Serial read error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2026-03-04 14:19:14,181 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:19:23,202 [INFO] WebSocket client disconnected: ('127.0.0.1', 34466)
+2026-03-04 14:19:23,202 [INFO] WebSocket client disconnected: ('127.0.0.1', 34462)
+2026-03-04 14:19:23,202 [INFO] server closing
+2026-03-04 14:19:23,202 [INFO] server closed
+2026-03-04 14:19:23,202 [INFO] Bridge stopped by user.
+2026-03-04 14:19:35,313 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 14:19:35,314 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 14:19:35,314 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 14:19:35,314 [INFO] Open browser at http://localhost:8765
+2026-03-04 14:19:35,314 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 14:19:35,314 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:19:35,321 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 14:19:35,321 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 14:19:36,593 [INFO] connection open
+2026-03-04 14:19:36,593 [INFO] WebSocket client connected: ('127.0.0.1', 47376)
+2026-03-04 14:19:36,765 [INFO] connection open
+2026-03-04 14:19:36,765 [INFO] WebSocket client connected: ('127.0.0.1', 47382)
+2026-03-04 14:19:37,225 [INFO] connection open
+2026-03-04 14:19:37,225 [INFO] WebSocket client connected: ('127.0.0.1', 47390)
+2026-03-04 14:19:37,546 [INFO] WebSocket client disconnected: ('127.0.0.1', 47390)
+2026-03-04 14:19:38,573 [INFO] WebSocket client disconnected: ('127.0.0.1', 47382)
+2026-03-04 14:19:57,877 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:57,889 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:57,901 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:57,921 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:57,937 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:57,951 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:57,963 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:57,976 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:57,988 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,008 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,019 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,036 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,049 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,059 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,073 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,093 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,106 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,121 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,133 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,143 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,158 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,180 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,192 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,202 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,214 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,230 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,241 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,261 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,274 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,284 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,299 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,312 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,324 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,345 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,360 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,371 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,386 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,396 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,408 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,427 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,444 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,456 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,469 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,482 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:19:58,495 [WARNING] Frame missing 'rot' field, skipping.
+2026-03-04 14:20:20,182 [WARNING] JSON parse error: Expecting ',' delimiter: line 1 column 268 (char 267) | raw: {"ts":48949,"rot":{"qi":-0.0096,"qj":0.0568,"qk":0.9686,"qr":0.2416,"acc":2.1919
+2026-03-04 14:22:22,116 [ERROR] Serial read error: device reports readiness to read but returned no data (device disconnected or multiple access on port?)
+2026-03-04 14:22:25,120 [ERROR] Cannot open serial port /dev/ttyACM0: [Errno 2] could not open port /dev/ttyACM0: [Errno 2] No such file or directory: '/dev/ttyACM0'. Retrying in 3s.
+2026-03-04 14:22:28,120 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:23:53,364 [INFO] WebSocket client disconnected: ('127.0.0.1', 47376)
+2026-03-04 14:23:53,364 [INFO] server closing
+2026-03-04 14:23:53,364 [INFO] server closed
+2026-03-04 14:23:53,364 [INFO] Bridge stopped by user.
+2026-03-04 14:24:04,581 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 14:24:04,581 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 14:24:04,581 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 14:24:04,582 [INFO] Open browser at http://localhost:8765
+2026-03-04 14:24:04,582 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:24:04,582 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 14:24:04,589 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 14:24:04,589 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 14:24:05,381 [INFO] connection open
+2026-03-04 14:24:05,381 [INFO] WebSocket client connected: ('127.0.0.1', 47200)
+2026-03-04 14:24:05,866 [INFO] connection open
+2026-03-04 14:24:05,866 [INFO] WebSocket client connected: ('127.0.0.1', 47204)
+2026-03-04 14:25:06,493 [INFO] WebSocket client disconnected: ('127.0.0.1', 47204)
+2026-03-04 14:25:06,642 [INFO] connection open
+2026-03-04 14:25:06,642 [INFO] WebSocket client connected: ('127.0.0.1', 34376)
+2026-03-04 14:33:56,767 [WARNING] JSON parse error: Expecting ',' delimiter: line 1 column 256 (char 255) | raw: {"ts":691757,"rot":{"qi":0.1965,"qj":0.2048,"qk":0.6927,"qr":0.6630,"acc":1.8950
+2026-03-04 14:37:14,253 [INFO] Starting BNO085 bridge | serial=/dev/ttyACM0@921600 | http=:8765 | ws=:8766
+2026-03-04 14:37:14,254 [INFO] Opening serial port /dev/ttyACM0 at 921600 baud.
+2026-03-04 14:37:14,254 [INFO] Starting WebSocket server on ws://localhost:8766
+2026-03-04 14:37:14,254 [INFO] Open browser at http://localhost:8765
+2026-03-04 14:37:14,254 [INFO] Serial port /dev/ttyACM0 opened successfully.
+2026-03-04 14:37:14,254 [INFO] HTTP server serving /home/tianqi/D/01_Projects/02_farm_robot/IMU_GPS/00_IMU/web_static on port 8765
+2026-03-04 14:37:14,261 [INFO] server listening on 0.0.0.0:8766
+2026-03-04 14:37:14,261 [INFO] Bridge running. Press Ctrl+C to stop.
+2026-03-04 14:37:14,757 [INFO] connection open
+2026-03-04 14:37:14,757 [INFO] WebSocket client connected: ('127.0.0.1', 46540)
+2026-03-04 14:37:15,527 [INFO] connection open
+2026-03-04 14:37:15,527 [INFO] WebSocket client connected: ('127.0.0.1', 46554)
+2026-03-04 14:37:16,767 [INFO] connection open
+2026-03-04 14:37:16,768 [INFO] WebSocket client connected: ('127.0.0.1', 46564)
