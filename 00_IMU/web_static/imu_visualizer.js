@@ -63,6 +63,15 @@ scene.add(worldAxis([1, 0, 0], 0xff4444, 1.0)); // X red
 scene.add(worldAxis([0, 1, 0], 0x44ff44, 1.0)); // Y green
 scene.add(worldAxis([0, 0, 1], 0x4444ff, 1.0)); // Z blue
 
+// Ground-projected heading arrow (chip X-axis projected to horizontal plane)
+// Orange, longer than body axes, added to scene (not imuGroup) so it stays on ground
+const headingArrow = new THREE.ArrowHelper(
+  new THREE.Vector3(1, 0, 0),
+  new THREE.Vector3(0, 0.01, 0),  // slight Y offset to avoid z-fighting with grid
+  1.6, 0xff8800, 0.18, 0.10
+);
+scene.add(headingArrow);
+
 // World axis labels
 function makeLabel(text, position, color = '#888888') {
   const canvas = document.createElement('canvas');
@@ -143,6 +152,12 @@ const FRAME_CORRECTION = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2)
 const currentQuat = new THREE.Quaternion();  // starts at identity
 const targetQuat  = new THREE.Quaternion();
 
+// ========== Control state ==========
+let northOffsetDeg = 0;    // heading offset applied for true-north calibration
+let rawHeadingDeg  = 0;    // latest raw (uncalibrated) heading from IMU
+let isPaused       = false; // whether to freeze live data updates
+let lockYawOnly    = false; // whether to show yaw only (strip pitch/roll)
+
 // ========== Resize handler ==========
 function onResize() {
   const w = container.clientWidth;
@@ -155,6 +170,47 @@ const resizeObserver = new ResizeObserver(onResize);
 resizeObserver.observe(container);
 onResize();
 
+// ========== Compass HUD ==========
+const compassCanvas = document.getElementById('compassCanvas');
+const compassCtx = compassCanvas.getContext('2d');
+const CW = 110, CH = 110, CR = 44, CX = 55, CY = 55;
+compassCanvas.width = CW; compassCanvas.height = CH;
+
+function drawCompass(deg) {
+  compassCtx.clearRect(0, 0, CW, CH);
+  // Outer ring
+  compassCtx.strokeStyle = '#30363d'; compassCtx.lineWidth = 1.5;
+  compassCtx.beginPath(); compassCtx.arc(CX, CY, CR, 0, Math.PI * 2); compassCtx.stroke();
+  // Cardinal letters (N/E/S/W)
+  const cardinals = [['N', 0], ['E', 90], ['S', 180], ['W', 270]];
+  cardinals.forEach(([label, a]) => {
+    const r = a * Math.PI / 180;
+    compassCtx.fillStyle = label === 'N' ? '#f85149' : '#7d8590';
+    compassCtx.font = 'bold 10px monospace';
+    compassCtx.textAlign = 'center'; compassCtx.textBaseline = 'middle';
+    compassCtx.fillText(label, CX + (CR - 9) * Math.sin(r), CY - (CR - 9) * Math.cos(r));
+  });
+  // Heading needle (orange)
+  const rad = (deg - 90) * Math.PI / 180; // -90: canvas 0°=right, we want 0°=up
+  compassCtx.strokeStyle = '#ff8800'; compassCtx.lineWidth = 2.5;
+  compassCtx.lineCap = 'round';
+  compassCtx.beginPath();
+  compassCtx.moveTo(CX, CY);
+  compassCtx.lineTo(CX + CR * 0.75 * Math.cos(rad), CY + CR * 0.75 * Math.sin(rad));
+  compassCtx.stroke();
+  // Center dot
+  compassCtx.fillStyle = '#ff8800';
+  compassCtx.beginPath(); compassCtx.arc(CX, CY, 3, 0, Math.PI * 2); compassCtx.fill();
+}
+
+// ========== Heading display ==========
+const COMPASS_DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+function updateHeadingDisplay(deg) {
+  const idx = Math.round(deg / 22.5) % 16;
+  setText('heading_deg', deg.toFixed(1) + '°');
+  setText('heading_dir', COMPASS_DIRS[idx]);
+}
+
 // ========== Animation loop ==========
 const SLERP_SPEED = 0.2;  // smoothing factor per frame
 
@@ -162,7 +218,31 @@ function animate() {
   requestAnimationFrame(animate);
   // Smooth rotation
   currentQuat.slerp(targetQuat, SLERP_SPEED);
-  imuGroup.quaternion.copy(currentQuat);
+
+  // Lock Yaw: strip pitch & roll from imuGroup, keep only yaw
+  if (lockYawOnly) {
+    const euler = new THREE.Euler().setFromQuaternion(currentQuat, 'YXZ');
+    const yawOnlyQuat = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(0, euler.y, 0, 'YXZ')
+    );
+    imuGroup.quaternion.copy(yawOnlyQuat);
+  } else {
+    imuGroup.quaternion.copy(currentQuat);
+  }
+
+  // Project chip X-axis onto horizontal plane and update heading arrow
+  const chipX = new THREE.Vector3(1, 0, 0).applyQuaternion(currentQuat);
+  chipX.y = 0;
+  if (chipX.lengthSq() > 1e-4) {
+    chipX.normalize();
+    headingArrow.setDirection(chipX.clone());
+  }
+  // Raw heading: 0° = +X world axis, increases clockwise from above
+  rawHeadingDeg = ((Math.atan2(chipX.z, chipX.x) * 180 / Math.PI) + 360) % 360;
+  const displayHeadingDeg = (rawHeadingDeg - northOffsetDeg + 360) % 360;
+  updateHeadingDisplay(displayHeadingDeg);
+  drawCompass(displayHeadingDeg);
+
   controls.update();
   renderer.render(scene, camera);
 }
@@ -277,18 +357,20 @@ function connect() {
       return;
     }
 
-    // Update 3D rotation using Game Rotation Vector (no magnetometer required,
-    // stable indoors). Falls back to Rotation Vector if game_rot is absent.
-    const src = data.game_rot || data.rot;
-    if (src) {
-      // BNO085 quaternion (i,j,k,real) → THREE.js (x,y,z,w)
-      // Then premultiply by frame correction (BNO085 Z-up → Three.js Y-up)
-      targetQuat.set(src.qi, src.qj, src.qk, src.qr).normalize();
-      targetQuat.premultiply(FRAME_CORRECTION);
-    }
+    if (!isPaused) {
+      // Update 3D rotation using Game Rotation Vector (no magnetometer required,
+      // stable indoors). Falls back to Rotation Vector if game_rot is absent.
+      const src = data.game_rot || data.rot;
+      if (src) {
+        // BNO085 quaternion (i,j,k,real) → THREE.js (x,y,z,w)
+        // Then premultiply by frame correction (BNO085 Z-up → Three.js Y-up)
+        targetQuat.set(src.qi, src.qj, src.qk, src.qr).normalize();
+        targetQuat.premultiply(FRAME_CORRECTION);
+      }
 
-    // Update data panel
-    updatePanel(data);
+      // Update data panel
+      updatePanel(data);
+    }
   };
 
   ws.onerror = (err) => {
@@ -306,3 +388,81 @@ function connect() {
 
 // Start connection
 connect();
+
+// ========== Toolbar button handlers ==========
+
+// Reset View
+document.getElementById('btn-reset-view').addEventListener('click', () => {
+  camera.position.set(1.5, 1.5, 2.5);
+  camera.lookAt(0, 0, 0);
+  controls.reset();
+});
+
+// Lock Yaw toggle
+const btnLockYaw = document.getElementById('btn-lock-yaw');
+btnLockYaw.addEventListener('click', () => {
+  lockYawOnly = !lockYawOnly;
+  btnLockYaw.classList.toggle('active', lockYawOnly);
+});
+
+// Pause / Resume toggle
+const btnPause = document.getElementById('btn-pause');
+btnPause.addEventListener('click', () => {
+  isPaused = !isPaused;
+  btnPause.textContent = isPaused ? 'Resume' : 'Pause';
+  btnPause.classList.toggle('active', isPaused);
+});
+
+// Clear North Offset
+document.getElementById('btn-clear-north').addEventListener('click', () => {
+  northOffsetDeg = 0;
+  document.getElementById('manual-heading').value = 0;
+});
+
+// Set Heading manually (user says "IMU is currently pointing at X degrees")
+document.getElementById('btn-set-heading').addEventListener('click', () => {
+  const userDeg = parseFloat(document.getElementById('manual-heading').value) || 0;
+  northOffsetDeg = (rawHeadingDeg - userDeg + 360) % 360;
+});
+
+// Sync Phone Compass
+document.getElementById('btn-sync-compass').addEventListener('click', () => {
+  if (typeof DeviceOrientationEvent === 'undefined') {
+    alert('DeviceOrientationEvent not supported on this device/browser.');
+    return;
+  }
+  // iOS 13+ requires explicit permission
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission()
+      .then(state => { if (state === 'granted') listenForCompass(); })
+      .catch(err => alert('Compass permission denied: ' + err));
+  } else {
+    listenForCompass();
+  }
+});
+
+function listenForCompass() {
+  // Prefer absolute orientation event (Android Chrome, gives true north)
+  let gotAbsolute = false;
+  window.addEventListener('deviceorientationabsolute', (e) => {
+    if (e.alpha !== null) {
+      gotAbsolute = true;
+      applyPhoneCompass(e.alpha);
+    }
+  }, { once: true });
+  // Fallback: regular deviceorientation (may be relative, not absolute)
+  setTimeout(() => {
+    if (!gotAbsolute) {
+      window.addEventListener('deviceorientation', (e) => {
+        if (e.alpha !== null) applyPhoneCompass(e.alpha);
+      }, { once: true });
+    }
+  }, 600);
+}
+
+function applyPhoneCompass(phoneAlphaDeg) {
+  // phoneAlphaDeg: 0=North, 90=East (clockwise) — standard for deviceorientationabsolute
+  northOffsetDeg = (rawHeadingDeg - phoneAlphaDeg + 360) % 360;
+  document.getElementById('manual-heading').value = Math.round(phoneAlphaDeg);
+  console.log(`[Compass] Phone alpha=${phoneAlphaDeg.toFixed(1)}, northOffset set to ${northOffsetDeg.toFixed(1)}`);
+}
