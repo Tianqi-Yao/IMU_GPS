@@ -135,3 +135,37 @@ serial_bridge.py
 | Three.js | r160（CDN） |
 | Arduino IDE | 2.x |
 | Adafruit BNO08x | 最新版 |
+
+---
+
+## RTK 地图可视化（新增）
+
+RTK 模块目录：
+
+```
+02_RTK/
+├── rtk_reader.py      # 读取 Emlid RS+ NMEA 数据（GGA/RMC）
+├── rtk_bridge.py      # Python RTK -> WebSocket + HTTP 静态页面
+└── web_static/
+    ├── index.html
+    ├── rtk_visualizer.js
+    └── style.css
+```
+
+启动：
+
+```bash
+cd 02_RTK
+python rtk_bridge.py --ws-port 8775 --hz 5 --open-browser
+```
+
+打开：`http://localhost:8775`
+
+说明：
+- 若 RTK 暂无有效 `lat/lon`，页面自动使用默认坐标 `38.9412928598587, -92.31884600793728`。
+- 支持导入 CSV（或制表符文本）路径点，至少需要 `lat, lon` 列，`tolerance_m, max_speed` 可选。
+- 地图会按移动状态给轨迹段着色：
+  - 绿色：进入当前目标容差圈（满足点位）
+  - 橙色：接近目标（2x 容差范围内）
+  - 红色：偏离目标
+- 自动记录行驶日志，可在页面点击“导出日志”下载 CSV。

@@ -21,12 +21,17 @@ Usage:
 """
 
 import logging
+import os
 import threading
 import time
 
 import serial
+    
 
-from config import RTK_PORT, RTK_BAUD, RTK_TIMEOUT
+RTK_PORT:    str   = os.environ.get("RTK_PORT",    "/dev/cu.usbmodem2403")
+RTK_BAUD:    int   = int(os.environ.get("RTK_BAUD",    "9600"))
+RTK_TIMEOUT: float = float(os.environ.get("RTK_TIMEOUT", "1.0"))
+
 
 logger = logging.getLogger(__name__)
 

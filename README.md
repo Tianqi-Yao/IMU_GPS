@@ -135,3 +135,37 @@ serial_bridge.py
 | Three.js | r160 (CDN) |
 | Arduino IDE | 2.x |
 | Adafruit BNO08x | latest |
+
+---
+
+## RTK Map Visualizer (New)
+
+RTK module files:
+
+```
+02_RTK/
+├── rtk_reader.py      # Emlid RS+ NMEA parser (GGA/RMC)
+├── rtk_bridge.py      # Python RTK -> WebSocket + HTTP static UI
+└── web_static/
+    ├── index.html
+    ├── rtk_visualizer.js
+    └── style.css
+```
+
+Run:
+
+```bash
+cd 02_RTK
+python rtk_bridge.py --ws-port 8775 --hz 5 --open-browser
+```
+
+Open: `http://localhost:8775`
+
+Notes:
+- If RTK does not provide valid `lat/lon`, UI falls back to `38.9412928598587, -92.31884600793728`.
+- CSV (or tab-delimited) waypoint import is supported; minimum columns are `lat, lon`; `tolerance_m, max_speed` are optional.
+- Track segments are color-coded by progress:
+  - Green: inside current waypoint tolerance (reached)
+  - Orange: approaching target (within 2x tolerance)
+  - Red: off path
+- Driving logs are recorded in-browser and can be exported as CSV.

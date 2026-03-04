@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RTK 路径可视化</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>RTK 路径可视化</h1>
+    <div class="status">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">未连接</span>
+    </div>
+  </header>
+
+  <section class="toolbar">
+    <label>CSV 路径文件
+      <input type="file" id="csvFile" accept=".csv,.txt" />
+    </label>
+    <button id="btnFindMe">Find Me</button>
+    <button id="btnCenterCurrent">回到当前位置</button>
+    <button id="btnEditRoute">编辑路径</button>
+    <button id="btnStartSim">开始模拟</button>
+    <button id="btnClearTrack">清空轨迹</button>
+    <button id="btnExportLog">导出日志</button>
+  </section>
+
+  <main>
+    <div id="map"></div>
+    <aside>
+      <div class="card">
+        <h3>当前位置</h3>
+        <div class="row"><span>纬度</span><strong id="latVal">-</strong></div>
+        <div class="row"><span>经度</span><strong id="lonVal">-</strong></div>
+        <div class="row"><span>来源</span><strong id="srcVal">-</strong></div>
+        <div class="row"><span>Fix</span><strong id="fixVal">-</strong></div>
+        <div class="row"><span>卫星</span><strong id="satVal">-</strong></div>
+        <div class="row"><span>HDOP</span><strong id="hdopVal">-</strong></div>
+        <div class="row"><span>速度</span><strong id="spdVal">-</strong></div>
+      </div>
+      <div class="card">
+        <h3>任务进度</h3>
+        <div class="row"><span>已满足点位</span><strong id="reachVal">0 / 0</strong></div>
+        <div class="row"><span>当前目标</span><strong id="targetVal">-</strong></div>
+        <div class="row"><span>目标距离</span><strong id="distVal">-</strong></div>
+      </div>
+      <div class="card">
+        <h3>事件记录</h3>
+        <ul id="eventList"></ul>
+      </div>
+    </aside>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="rtk_visualizer.js"></script>
+</body>
+</html>
