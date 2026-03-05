@@ -157,7 +157,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--open-browser",
-        action="store_true",
+        default=True,
         help="Auto-open browser after startup",
     )
     return parser.parse_args()
