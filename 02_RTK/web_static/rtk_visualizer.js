@@ -1,6 +1,5 @@
 const DEFAULT_POS = [38.9412928598587, -92.31884600793728];
 const WS_URL = `ws://${window.location.hostname}:${Number(window.location.port || 8775) + 1}`;
-const LANG_KEY = 'rtk_ui_lang';
 const I18N = {
   en: {
     title: 'RTK Path Visualizer',
@@ -113,7 +112,7 @@ const I18N = {
     langTitleEn: 'Switch to English',
   }
 };
-let currentLang = localStorage.getItem(LANG_KEY) === 'zh' ? 'zh' : 'en';
+let currentLang = 'en';
 
 function t(key, vars = {}) {
   const raw = I18N[currentLang][key] ?? I18N.en[key] ?? key;
@@ -802,7 +801,6 @@ map.on('click', addWaypointByMapClick);
 
 langToggle.addEventListener('click', () => {
   currentLang = currentLang === 'zh' ? 'en' : 'zh';
-  localStorage.setItem(LANG_KEY, currentLang);
   applyLanguage();
 });
 
