@@ -11,6 +11,7 @@ const I18N = {
     centerCurrent: 'Center Current',
     editRoute: 'Edit Route',
     doneEdit: 'Finish Edit',
+    undoNode: 'Undo Node',
     startSim: 'Start Simulation',
     stopSim: 'Stop Simulation',
     exportRoute: 'Export Route CSV',
@@ -45,6 +46,8 @@ const I18N = {
     simDone: 'Simulation completed',
     editOn: 'Edit mode on: click map to add points (tol={tolerance}m, speed={speed}m/s)',
     editOff: 'Edit finished, generated {count} points',
+    undoDone: 'Removed latest node #{id}',
+    undoEmpty: 'No node to undo',
     geoUnsupported: 'Geolocation is not supported by this browser',
     geoOk: 'Located {lat}, {lon}',
     geoFail: 'Locate failed: {message}',
@@ -66,6 +69,7 @@ const I18N = {
     centerCurrent: '回到当前位置',
     editRoute: '编辑路径',
     doneEdit: '结束编辑',
+    undoNode: '撤销节点',
     startSim: '开始模拟',
     stopSim: '停止模拟',
     exportRoute: '导出路径CSV',
@@ -100,6 +104,8 @@ const I18N = {
     simDone: '模拟完成',
     editOn: '编辑模式开启：点击地图添加点位 (tol={tolerance}m, speed={speed}m/s)',
     editOff: '编辑完成，已生成 {count} 个点位',
+    undoDone: '已撤销最近节点 #{id}',
+    undoEmpty: '当前没有可撤销节点',
     geoUnsupported: '浏览器不支持定位',
     geoOk: '定位成功 {lat}, {lon}',
     geoFail: '定位失败: {message}',
@@ -196,6 +202,7 @@ const csvFile = document.getElementById('csvFile');
 const btnFindMe = document.getElementById('btnFindMe');
 const btnCenterCurrent = document.getElementById('btnCenterCurrent');
 const btnEditRoute = document.getElementById('btnEditRoute');
+const btnUndoNode = document.getElementById('btnUndoNode');
 const editRouteOptions = document.getElementById('editRouteOptions');
 const editTolerance = document.getElementById('editTolerance');
 const editMaxSpeed = document.getElementById('editMaxSpeed');
@@ -243,6 +250,7 @@ function applyLanguage() {
   btnFindMe.textContent = t('findMe');
   btnCenterCurrent.textContent = t('centerCurrent');
   btnEditRoute.textContent = isEditMode ? t('doneEdit') : t('editRoute');
+  btnUndoNode.textContent = t('undoNode');
   btnStartSim.textContent = simTimer ? t('stopSim') : t('startSim');
   btnExportRoute.textContent = t('exportRoute');
   btnClearTrack.textContent = t('clearTrack');
@@ -303,6 +311,12 @@ function getEditParams() {
   if (editTolerance) editTolerance.value = tolerance.toString();
   if (editMaxSpeed) editMaxSpeed.value = maxSpeed.toString();
   return { tolerance, maxSpeed };
+}
+
+function updateUndoButtonState() {
+  if (!btnUndoNode) return;
+  const canUndo = isEditMode && waypoints.length > 0;
+  btnUndoNode.disabled = !canUndo;
 }
 
 function addEvent(text, color = '#1b6c8d') {
@@ -380,7 +394,8 @@ function parseCsvRows(text) {
   }).filter(Boolean);
 }
 
-function redrawWaypoints() {
+function redrawWaypoints(options = {}) {
+  const { fitView = true } = options;
   waypointMarkers.forEach((m) => m.remove());
   waypointMarkers = [];
 
@@ -394,6 +409,7 @@ function redrawWaypoints() {
     setField('targetVal', '-');
     setField('distVal', '-');
     simPath = [];
+    updateUndoButtonState();
     return;
   }
 
@@ -417,10 +433,12 @@ function redrawWaypoints() {
   });
 
   simPath = interpolatePath(waypoints.map((w) => [w.lat, w.lon]), 0.4);
-
-  const bounds = L.latLngBounds(waypoints.map((w) => [w.lat, w.lon]));
-  bounds.extend(currentMarker.getLatLng());
-  map.fitBounds(bounds.pad(0.2));
+  if (fitView) {
+    const bounds = L.latLngBounds(waypoints.map((w) => [w.lat, w.lon]));
+    bounds.extend(currentMarker.getLatLng());
+    map.fitBounds(bounds.pad(0.2));
+  }
+  updateUndoButtonState();
 }
 
 function findCurrentTarget() {
@@ -717,8 +735,19 @@ function addWaypointByMapClick(e) {
     reached: false,
     reached_at: null,
   });
-  redrawWaypoints();
+  redrawWaypoints({ fitView: false });
   setField('reachVal', `0 / ${waypoints.length}`);
+}
+
+function undoLastWaypoint() {
+  if (!isEditMode || !waypoints.length) {
+    addEvent(t('undoEmpty'), '#6b7280');
+    return;
+  }
+  const removed = waypoints.pop();
+  redrawWaypoints({ fitView: false });
+  setField('reachVal', `0 / ${waypoints.length}`);
+  addEvent(t('undoDone', { id: removed.id }), '#6b7280');
 }
 
 function toggleEditRoute() {
@@ -726,6 +755,7 @@ function toggleEditRoute() {
   setEditOptionsVisible(isEditMode);
   btnEditRoute.textContent = isEditMode ? t('doneEdit') : t('editRoute');
   btnEditRoute.classList.toggle('active', isEditMode);
+  updateUndoButtonState();
   if (isEditMode) {
     const { tolerance, maxSpeed } = getEditParams();
     stopSimulation();
@@ -792,6 +822,7 @@ csvFile.addEventListener('change', async (ev) => {
 btnFindMe.addEventListener('click', findMe);
 btnCenterCurrent.addEventListener('click', centerToCurrent);
 btnEditRoute.addEventListener('click', toggleEditRoute);
+btnUndoNode.addEventListener('click', undoLastWaypoint);
 btnStartSim.addEventListener('click', startSimulation);
 btnExportRoute.addEventListener('click', exportRouteCsv);
 btnClearTrack.addEventListener('click', clearTrack);
