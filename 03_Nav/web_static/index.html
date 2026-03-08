@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nav Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ===== Header ===== -->
+  <header>
+    <h1 id="pageTitle">Nav Dashboard</h1>
+    <div class="status-indicator">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Disconnected</span>
+    </div>
+    <button id="langToggle" class="lang-toggle" title="Switch to Chinese" aria-label="Switch language">&#9676;</button>
+  </header>
+
+  <!-- ===== Toolbar ===== -->
+  <div class="toolbar">
+    <!-- North calibration group (from IMU) -->
+    <div class="toolbar-group">
+      <input type="number" id="manual-heading" min="0" max="359" step="1"
+             value="0" title="Current heading in degrees (0=N, 90=E)" />
+      <span class="unit">&deg;</span>
+      <button id="btn-set-heading" title="Set current IMU direction to this angle">Set Heading</button>
+    </div>
+    <button id="btn-clear-north" title="Remove north calibration offset">Clear North</button>
+
+    <span class="toolbar-divider"></span>
+
+    <!-- Route tools (from RTK) -->
+    <label id="csvLabel">CSV Route
+      <input type="file" id="csvFile" accept=".csv,.txt" />
+    </label>
+    <button id="btnCenterCurrent">Center Current</button>
+    <button id="btnEditRoute">Edit Route</button>
+    <button id="btnUndoNode" disabled>Undo Node</button>
+    <div id="editRouteOptions" class="edit-options" aria-hidden="true">
+      <label>tol(m)
+        <input type="number" id="editTolerance" min="0.1" step="0.1" value="0.5" />
+      </label>
+      <label>speed(m/s)
+        <input type="number" id="editMaxSpeed" min="0" step="0.1" value="1.0" />
+      </label>
+    </div>
+    <button id="btnStartSim">Start Sim</button>
+    <button id="btnExportRoute">Export CSV</button>
+
+    <span class="toolbar-divider"></span>
+
+    <!-- View controls (from IMU) -->
+    <button id="btn-lock-yaw" class="btn-toggle" title="Show yaw only (ignore pitch/roll)">Lock Yaw</button>
+    <button id="btn-pause" class="btn-toggle" title="Freeze / resume live data">Pause</button>
+  </div>
+
+  <!-- ===== Main ===== -->
+  <div class="main-container">
+
+    <!-- Left: 3D + Map stacked -->
+    <div class="left-column">
+      <div id="canvas-container">
+        <!-- Three.js canvas injected by nav_visualizer.js -->
+        <canvas id="compassCanvas"></canvas>
+        <div class="canvas-hint">Drag to rotate &middot; Scroll to zoom</div>
+      </div>
+      <div id="map"></div>
+    </div>
+
+    <!-- Right: Data panels -->
+    <div id="data-panel">
+
+      <!-- Rotation Vector -->
+      <div class="panel-section">
+        <h3>Rotation Vector</h3>
+        <div class="data-3axis">
+          <span class="axis-label">qi</span><span class="axis-value" id="rot_qi">&ndash;</span>
+          <span class="axis-label">qj</span><span class="axis-value" id="rot_qj">&ndash;</span>
+          <span class="axis-label">qk</span><span class="axis-value" id="rot_qk">&ndash;</span>
+        </div>
+        <div class="data-row" style="margin-top:4px">
+          <span class="label">qr</span><span class="value" id="rot_qr">&ndash;</span>
+        </div>
+        <div class="data-row">
+          <span class="label">acc</span><span class="value" id="rot_acc">&ndash; rad</span>
+        </div>
+      </div>
+
+      <!-- Heading -->
+      <div class="panel-section">
+        <h3>Heading (Game Rot)</h3>
+        <div class="data-row">
+          <span class="label">Angle</span>
+          <span class="value" id="heading_deg">&ndash;</span>
+        </div>
+        <div class="data-row">
+          <span class="label">Dir</span>
+          <span class="value" id="heading_dir" style="color:var(--cyan)">&ndash;</span>
+        </div>
+      </div>
+
+      <!-- Euler Angles -->
+      <div class="panel-section">
+        <h3>Euler Angles (deg)</h3>
+        <div class="data-3axis">
+          <span class="axis-label">Roll</span> <span class="axis-value" id="euler_roll">&ndash;</span>
+          <span class="axis-label">Pitch</span><span class="axis-value" id="euler_pitch">&ndash;</span>
+          <span class="axis-label">Yaw</span>  <span class="axis-value" id="euler_yaw">&ndash;</span>
+        </div>
+      </div>
+
+      <!-- Accelerometer -->
+      <div class="panel-section">
+        <h3>Accelerometer (m/s&sup2;)</h3>
+        <div class="data-3axis">
+          <span class="axis-label">x</span><span class="axis-value" id="accel_x">&ndash;</span>
+          <span class="axis-label">y</span><span class="axis-value" id="accel_y">&ndash;</span>
+          <span class="axis-label">z</span><span class="axis-value" id="accel_z">&ndash;</span>
+        </div>
+      </div>
+
+      <!-- Linear Acceleration -->
+      <div class="panel-section">
+        <h3>Linear Accel (m/s&sup2;)</h3>
+        <div class="data-3axis">
+          <span class="axis-label">x</span><span class="axis-value" id="lin_x">&ndash;</span>
+          <span class="axis-label">y</span><span class="axis-value" id="lin_y">&ndash;</span>
+          <span class="axis-label">z</span><span class="axis-value" id="lin_z">&ndash;</span>
+        </div>
+      </div>
+
+      <!-- Gravity -->
+      <div class="panel-section">
+        <h3>Gravity (m/s&sup2;)</h3>
+        <div class="data-3axis">
+          <span class="axis-label">x</span><span class="axis-value" id="grav_x">&ndash;</span>
+          <span class="axis-label">y</span><span class="axis-value" id="grav_y">&ndash;</span>
+          <span class="axis-label">z</span><span class="axis-value" id="grav_z">&ndash;</span>
+        </div>
+      </div>
+
+      <!-- Gyroscope -->
+      <div class="panel-section">
+        <h3>Gyroscope (rad/s)</h3>
+        <div class="data-3axis">
+          <span class="axis-label">x</span><span class="axis-value" id="gyro_x">&ndash;</span>
+          <span class="axis-label">y</span><span class="axis-value" id="gyro_y">&ndash;</span>
+          <span class="axis-label">z</span><span class="axis-value" id="gyro_z">&ndash;</span>
+        </div>
+      </div>
+
+      <!-- Game Rotation Vector -->
+      <div class="panel-section">
+        <h3>Game Rot (no mag)</h3>
+        <div class="data-3axis">
+          <span class="axis-label">qi</span><span class="axis-value" id="game_qi">&ndash;</span>
+          <span class="axis-label">qj</span><span class="axis-value" id="game_qj">&ndash;</span>
+          <span class="axis-label">qk</span><span class="axis-value" id="game_qk">&ndash;</span>
+        </div>
+        <div class="data-row" style="margin-top:4px">
+          <span class="label">qr</span><span class="value" id="game_qr">&ndash;</span>
+        </div>
+      </div>
+
+      <!-- Magnetometer -->
+      <div class="panel-section">
+        <h3>Magnetometer (&micro;T)</h3>
+        <div class="data-3axis">
+          <span class="axis-label">x</span><span class="axis-value" id="mag_x">&ndash;</span>
+          <span class="axis-label">y</span><span class="axis-value" id="mag_y">&ndash;</span>
+          <span class="axis-label">z</span><span class="axis-value" id="mag_z">&ndash;</span>
+        </div>
+      </div>
+
+      <!-- IMU Status footer -->
+      <div class="status-row">
+        <div>
+          <span style="color:var(--muted);font-size:0.78rem">Steps: </span>
+          <span id="steps" style="font-size:0.78rem">&ndash;</span>
+        </div>
+        <div class="cal-badge cal-0" id="calBadge">
+          <span class="cal-dot"></span>
+          <span id="calText">Cal: &ndash;</span>
+        </div>
+        <div class="hz-display">
+          <span id="hzDisplay">&ndash; Hz</span>
+        </div>
+      </div>
+
+      <!-- RTK Position Card -->
+      <div class="card" style="margin-top:12px">
+        <h3 id="cardCurrentTitle">Current Position</h3>
+        <div class="row"><span id="labelLat">Latitude</span><strong id="latVal">-</strong></div>
+        <div class="row"><span id="labelLon">Longitude</span><strong id="lonVal">-</strong></div>
+        <div class="row"><span id="labelSource">Source</span><strong id="srcVal">-</strong></div>
+        <div class="row"><span>Fix</span><strong id="fixVal">-</strong></div>
+        <div class="row"><span id="labelSats">Satellites</span><strong id="satVal">-</strong></div>
+        <div class="row"><span>HDOP</span><strong id="hdopVal">-</strong></div>
+        <div class="row"><span id="labelSpeed">Speed</span><strong id="spdVal">-</strong></div>
+      </div>
+
+      <!-- Mission Progress Card -->
+      <div class="card">
+        <h3 id="cardMissionTitle">Mission Progress</h3>
+        <div class="row"><span id="labelReached">Reached</span><strong id="reachVal">0 / 0</strong></div>
+        <div class="row"><span id="labelTarget">Target</span><strong id="targetVal">-</strong></div>
+        <div class="row"><span id="labelDistance">Distance</span><strong id="distVal">-</strong></div>
+      </div>
+
+      <!-- Events Card -->
+      <div class="card">
+        <h3 id="cardEventTitle">Events</h3>
+        <ul id="eventList"></ul>
+      </div>
+
+    </div><!-- #data-panel -->
+  </div><!-- .main-container -->
+
+  <!-- Leaflet (dynamic load with fallback) + Three.js -->
+  <script>
+    function loadCss(href) {
+      return new Promise((resolve, reject) => {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = href;
+        link.onload = () => resolve(href);
+        link.onerror = () => reject(new Error('CSS load failed: ' + href));
+        document.head.appendChild(link);
+      });
+    }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = false;
+        script.onload = () => resolve(src);
+        script.onerror = () => reject(new Error('Script load failed: ' + src));
+        document.body.appendChild(script);
+      });
+    }
+
+    async function loadFirst(candidates, loader) {
+      let lastErr = null;
+      for (const c of candidates) {
+        try { return await loader(c); } catch (err) { lastErr = err; }
+      }
+      throw lastErr || new Error('No candidates');
+    }
+
+    async function boot() {
+      try {
+        await loadFirst(
+          ['./assets/vendor/leaflet/leaflet.css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'],
+          loadCss
+        );
+        await loadFirst(
+          ['./assets/vendor/leaflet/leaflet.js', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'],
+          loadScript
+        );
+      } catch (err) {
+        console.error('Leaflet load failed:', err);
+      }
+      // Signal that Leaflet is ready
+      window.dispatchEvent(new Event('leaflet-ready'));
+    }
+
+    boot();
+  </script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="nav_visualizer.js"></script>
+
+</body>
+</html>
