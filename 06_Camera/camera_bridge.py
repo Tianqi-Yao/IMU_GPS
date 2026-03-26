@@ -267,14 +267,18 @@ class CameraDevice:
 
     # ── Frame access ──────────────────────────────────────────────────────────
 
-    def get_frames(self, stream_names: list[str]) -> dict[str, np.ndarray | None]:
-        """Non-blocking grab for requested streams. Returns dict of BGR arrays.
+    def get_frames(self, stream_names: list[str]) -> tuple[dict[str, np.ndarray | None], bool]:
+        """Non-blocking grab for requested streams.
+
+        Returns:
+            (frames_dict, has_new_frame)
 
         When tryGet() returns None (no new frame yet), the last good frame for
         that stream is returned instead.  This prevents flickering when streams
         run at different rates (e.g. RGB at 30fps, depth at 25fps).
         """
         result: dict[str, np.ndarray | None] = {}
+        has_new_frame = False
         for name in stream_names:
             q = self._queues.get(name)
             if q is None:
@@ -283,6 +287,7 @@ class CameraDevice:
             try:
                 pkt = q.tryGet()
                 if pkt is not None:
+                    has_new_frame = True
                     raw = pkt.getCvFrame()
                     self._last_raw_frames[name] = raw  # store before colorisation
                     frame = raw
@@ -298,7 +303,7 @@ class CameraDevice:
             except Exception as exc:
                 logger.warning("CameraDevice: get_frames('%s') error: %s", name, exc)
                 result[name] = self._last_frames.get(name)
-        return result
+        return result, has_new_frame
 
     def available_streams(self) -> list[str]:
         return list(self._queues.keys())
@@ -467,7 +472,10 @@ class MJPEGServer:
                 time.sleep(0.01)
                 continue
 
-            frames = self._device.get_frames(proc.required_streams())
+            frames, has_new_frame = self._device.get_frames(proc.required_streams())
+            if not has_new_frame:
+                time.sleep(0.001)
+                continue
             try:
                 output = proc.process(frames)
             except Exception as exc:

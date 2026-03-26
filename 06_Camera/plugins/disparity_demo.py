@@ -35,7 +35,7 @@ class DisparityDemoProcessor(FrameProcessor):
         if disp is None:
             # No stereo stream — return a black frame with a hint
             blank = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(blank, "No disparity — restart with --stereo",
+            cv2.putText(blank, "Please set CAM_ENABLE_DISPARITY = True in config.py",
                         (20, 240), cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 60, 255), 2, cv2.LINE_AA)
             return blank
