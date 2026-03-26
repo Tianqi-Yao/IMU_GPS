@@ -4,5 +4,5 @@ CLAUDE.md
 **/.DS_Store
 **/.vscode/*
 **/*.log
-# .cache
-# **/.cache
+.cache
+**/.cache

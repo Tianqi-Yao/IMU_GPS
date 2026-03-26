@@ -172,12 +172,14 @@ class CameraDevice:
         width: int,
         height: int,
         enable_stereo: bool = False,
+        enable_disparity: bool = False,
     ) -> None:
         self._device_ip = device_ip
         self._fps = fps
         self._width = width
         self._height = height
         self._enable_stereo = enable_stereo
+        self._enable_disparity = enable_disparity
 
         self._device = None
         self._pipeline = None
@@ -230,7 +232,8 @@ class CameraDevice:
                 right_out.link(stereo.right)
 
                 self._queues["depth"] = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
-                self._queues["disparity"] = stereo.disparity.createOutputQueue(maxSize=1, blocking=False)
+                if self._enable_disparity:
+                    self._queues["disparity"] = stereo.disparity.createOutputQueue(maxSize=1, blocking=False)
 
             self._pipeline.start()
             logger.info(
@@ -522,6 +525,7 @@ class CameraPipeline:
         default_plugin: str = "simple_color",
         default_config: dict | None = None,
         enable_stereo: bool = False,
+        enable_disparity: bool = False,
     ) -> None:
         self._stream_ports = stream_ports
         self._quality = quality
@@ -544,6 +548,7 @@ class CameraPipeline:
                 width=width,
                 height=height,
                 enable_stereo=enable_stereo,
+                enable_disparity=enable_disparity,
             )
             port = stream_ports.get(cam_id, 8080)
             srv = MJPEGServer(dev, port, quality)
@@ -993,12 +998,12 @@ class CameraBridge:
         static_dir: Path,
         plugin: str = "simple_color",
         enable_stereo: bool = False,
+        enable_disparity: bool = False,
     ) -> None:
         self._http_port = ws_port
         self._ws_port = ws_port + 1
         self._cam_selection = cam_selection
         self._static_dir = static_dir
-        # Store original argv for process-restart (Advanced Settings)
 
         cam_configs: dict[int, dict] = {}
         if cam1_ip:
@@ -1016,6 +1021,7 @@ class CameraBridge:
             default_plugin=plugin,
             default_config={},
             enable_stereo=enable_stereo,
+            enable_disparity=enable_disparity,
         )
 
     def run(self) -> None:
@@ -1156,6 +1162,11 @@ def _parse_args() -> argparse.Namespace:
         default=_c.CAM_ENABLE_STEREO if _c else False,
         help="Enable stereo depth nodes (Left/Right/StereoDepth)",
     )
+    parser.add_argument(
+        "--disparity", action=argparse.BooleanOptionalAction,
+        default=_c.CAM_ENABLE_DISPARITY if _c else False,
+        help="Enable raw disparity stream (extra CPU/bandwidth; off by default)",
+    )
     return parser.parse_args()
 
 
@@ -1175,4 +1186,5 @@ if __name__ == "__main__":
         static_dir=Path(__file__).parent / "web_static",
         plugin=args.plugin,
         enable_stereo=args.stereo,
+        enable_disparity=args.disparity,
     ).run()
