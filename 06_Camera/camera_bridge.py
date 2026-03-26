@@ -172,6 +172,7 @@ class CameraDevice:
         self._device = None
         self._pipeline = None
         self._queues: dict[str, object] = {}
+        self._last_frames: dict[str, np.ndarray] = {}  # cache last good frame per stream
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -234,6 +235,7 @@ class CameraDevice:
     def close(self) -> None:
         """Stop pipeline and release device."""
         self._queues = {}
+        self._last_frames = {}
         if self._pipeline is not None:
             try:
                 self._pipeline.stop()
@@ -251,7 +253,12 @@ class CameraDevice:
     # ── Frame access ──────────────────────────────────────────────────────────
 
     def get_frames(self, stream_names: list[str]) -> dict[str, np.ndarray | None]:
-        """Non-blocking grab for requested streams. Returns dict of BGR arrays."""
+        """Non-blocking grab for requested streams. Returns dict of BGR arrays.
+
+        When tryGet() returns None (no new frame yet), the last good frame for
+        that stream is returned instead.  This prevents flickering when streams
+        run at different rates (e.g. RGB at 30fps, depth at 25fps).
+        """
         result: dict[str, np.ndarray | None] = {}
         for name in stream_names:
             q = self._queues.get(name)
@@ -268,12 +275,12 @@ class CameraDevice:
                             cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U),
                             cv2.COLORMAP_JET,
                         )
-                    result[name] = frame
-                else:
-                    result[name] = None
+                    self._last_frames[name] = frame
+                # Return last good frame if no new one arrived
+                result[name] = self._last_frames.get(name)
             except Exception as exc:
                 logger.warning("CameraDevice: get_frames('%s') error: %s", name, exc)
-                result[name] = None
+                result[name] = self._last_frames.get(name)
         return result
 
     def available_streams(self) -> list[str]:
@@ -973,9 +980,9 @@ def _parse_args() -> argparse.Namespace:
         "--cam2-stream-port", type=int, default=8081,
         help="MJPEG stream port for camera 2 (default: 8081)",
     )
-    parser.add_argument("--fps", type=int, default=30, help="Camera FPS (default: 30)")
-    parser.add_argument("--width", type=int, default=1280, help="Frame width (default: 1280)")
-    parser.add_argument("--height", type=int, default=720, help="Frame height (default: 720)")
+    parser.add_argument("--fps", type=int, default=25, help="Camera FPS (default: 25)")
+    parser.add_argument("--width", type=int, default=640, help="Frame width (default: 640)")
+    parser.add_argument("--height", type=int, default=480, help="Frame height (default: 480)")
     parser.add_argument(
         "--mjpeg-quality", type=int, default=80,
         help="JPEG encoding quality 1-100 (default: 80)",
