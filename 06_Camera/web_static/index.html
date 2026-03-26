@@ -22,9 +22,29 @@
 
     <!-- Video Display -->
     <div class="video-container">
-      <img id="mjpegStream" class="mjpeg-img" alt="Camera stream" />
-      <div class="video-overlay" id="videoOverlay">
-        <span>Stream not active</span>
+      <div id="singleView" class="single-view">
+        <img id="mjpegStream" class="mjpeg-img" alt="Camera stream" />
+        <div class="video-overlay" id="videoOverlay">
+          <div class="overlay-spinner" id="overlaySpinner"></div>
+          <span id="videoOverlayText">Stream not active</span>
+        </div>
+      </div>
+
+      <div id="dualView" class="dual-view hidden">
+        <div class="dual-cam-card">
+          <div class="dual-cam-title">Camera 1</div>
+          <img id="mjpegStreamCam1" class="mjpeg-img" alt="Camera 1 stream" />
+          <div class="video-overlay" id="videoOverlayCam1">
+            <span>Camera 1 not active</span>
+          </div>
+        </div>
+        <div class="dual-cam-card">
+          <div class="dual-cam-title">Camera 2</div>
+          <img id="mjpegStreamCam2" class="mjpeg-img" alt="Camera 2 stream" />
+          <div class="video-overlay" id="videoOverlayCam2">
+            <span>Camera 2 not active</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -37,6 +57,10 @@
         <div class="cam-select">
           <button class="cam-btn active" id="btnCam1" data-cam="1">Camera 1</button>
           <button class="cam-btn" id="btnCam2" data-cam="2">Camera 2</button>
+        </div>
+        <div class="cam-select view-mode">
+          <button class="cam-btn active" id="btnViewSingle">Single</button>
+          <button class="cam-btn" id="btnViewBoth">Both</button>
         </div>
       </div>
 
@@ -80,9 +104,25 @@
           <span class="label">Cam 1</span>
           <a class="value url-link" id="mjpegUrl1" href="#" target="_blank">—</a>
         </div>
+        <div class="data-row">
+          <span class="label">Cam 1 Clients</span>
+          <span class="value" id="cam1Clients">0</span>
+        </div>
+        <div class="button-group compact-group">
+          <button class="btn-start" id="btnStartCam1">Start C1</button>
+          <button class="btn-stop" id="btnStopCam1">Stop C1</button>
+        </div>
         <div class="data-row url-row">
           <span class="label">Cam 2</span>
           <a class="value url-link" id="mjpegUrl2" href="#" target="_blank">—</a>
+        </div>
+        <div class="data-row">
+          <span class="label">Cam 2 Clients</span>
+          <span class="value" id="cam2Clients">0</span>
+        </div>
+        <div class="button-group compact-group">
+          <button class="btn-start" id="btnStartCam2">Start C2</button>
+          <button class="btn-stop" id="btnStopCam2">Stop C2</button>
         </div>
       </div>
 

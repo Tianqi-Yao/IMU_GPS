@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import http.server
+import importlib
 import json
 import logging
 import socketserver
@@ -35,7 +36,19 @@ import cv2
 import numpy as np
 import websockets
 
-from plugins import FrameSource, get_plugin, list_plugins
+try:
+    _plugins_mod = importlib.import_module("plugins")
+except ModuleNotFoundError:
+    _plugins_mod = importlib.import_module(f"{__package__}.plugins")
+
+FrameSource = _plugins_mod.FrameSource
+get_plugin = _plugins_mod.get_plugin
+list_plugins = _plugins_mod.list_plugins
+
+
+class _ThreadingTCPServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
 
 
 # ── Logger setup ─────────────────────────────────────────────────────────────
@@ -79,6 +92,12 @@ class CameraFrame:
     height: int = 0
     mjpeg_url_cam1: str = ""
     mjpeg_url_cam2: str = ""
+    cam1_clients: int = 0
+    cam2_clients: int = 0
+    cam1_streaming: bool = False
+    cam2_streaming: bool = False
+    cam1_fps: float = 0.0
+    cam2_fps: float = 0.0
     # ── Plugin fields ──
     active_plugin: str = ""
     active_plugin_config: dict = field(default_factory=dict)
@@ -94,6 +113,12 @@ class CameraFrame:
             "height": self.height,
             "mjpeg_url_cam1": self.mjpeg_url_cam1,
             "mjpeg_url_cam2": self.mjpeg_url_cam2,
+            "cam1_clients": self.cam1_clients,
+            "cam2_clients": self.cam2_clients,
+            "cam1_streaming": self.cam1_streaming,
+            "cam2_streaming": self.cam2_streaming,
+            "cam1_fps": round(self.cam1_fps, 1),
+            "cam2_fps": round(self.cam2_fps, 1),
             "active_plugin": self.active_plugin,
             "active_plugin_config": self.active_plugin_config,
             "available_plugins": self.available_plugins,
@@ -122,9 +147,11 @@ class MJPEGServer:
         self._frame_lock = threading.Lock()
         self._running = False
         self._capture_thread: threading.Thread | None = None
-        self._httpd: socketserver.TCPServer | None = None
+        self._httpd: _ThreadingTCPServer | None = None
         self._fps_tracker_times: list[float] = []
         self._current_fps: float = 0.0
+        self._client_count = 0
+        self._client_lock = threading.Lock()
 
     @property
     def fps(self) -> float:
@@ -133,6 +160,11 @@ class MJPEGServer:
     @property
     def streaming(self) -> bool:
         return self._running
+
+    @property
+    def client_count(self) -> int:
+        with self._client_lock:
+            return self._client_count
 
     def start(self) -> None:
         """Open the frame source and start capture + HTTP server threads."""
@@ -158,14 +190,16 @@ class MJPEGServer:
         quality = self._quality
 
         class _StreamHandler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self_h):
-                self_h.send_response(200)
-                self_h.send_header(
+            def do_GET(self):
+                with server_ref._client_lock:
+                    server_ref._client_count += 1
+                self.send_response(200)
+                self.send_header(
                     "Content-Type",
                     "multipart/x-mixed-replace; boundary=frame",
                 )
-                self_h.send_header("Cache-Control", "no-cache")
-                self_h.end_headers()
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
                 try:
                     while server_ref._running:
                         with server_ref._frame_lock:
@@ -174,23 +208,25 @@ class MJPEGServer:
                             time.sleep(0.01)
                             continue
                         try:
-                            self_h.wfile.write(b"--frame\r\n")
-                            self_h.wfile.write(b"Content-Type: image/jpeg\r\n\r\n")
-                            self_h.wfile.write(jpeg)
-                            self_h.wfile.write(b"\r\n")
+                            self.wfile.write(b"--frame\r\n")
+                            self.wfile.write(b"Content-Type: image/jpeg\r\n\r\n")
+                            self.wfile.write(jpeg)
+                            self.wfile.write(b"\r\n")
                         except (BrokenPipeError, ConnectionResetError):
                             break
                         time.sleep(0.01)
                 except Exception:
                     pass
+                finally:
+                    with server_ref._client_lock:
+                        server_ref._client_count = max(0, server_ref._client_count - 1)
 
-            def log_message(self_h, fmt, *args):
-                logger.debug("MJPEG %s - %s", self_h.address_string(), fmt % args)
+            def log_message(self, format, *args):
+                logger.debug("MJPEG %s - %s", self.address_string(), format % args)
 
         def _run_http():
-            socketserver.TCPServer.allow_reuse_address = True
             try:
-                self._httpd = socketserver.TCPServer(("", self._port), _StreamHandler)
+                self._httpd = _ThreadingTCPServer(("", self._port), _StreamHandler)
                 logger.info("MJPEGServer: MJPEG stream on http://0.0.0.0:%d", self._port)
                 self._httpd.serve_forever()
             except Exception as exc:
@@ -204,6 +240,7 @@ class MJPEGServer:
         if self._httpd is not None:
             try:
                 self._httpd.shutdown()
+                self._httpd.server_close()
             except Exception as exc:
                 logger.warning("MJPEGServer: error shutting down HTTP: %s", exc)
             self._httpd = None
@@ -213,6 +250,8 @@ class MJPEGServer:
             logger.warning("MJPEGServer: error closing source: %s", exc)
         self._latest_jpeg = b""
         self._current_fps = 0.0
+        with self._client_lock:
+            self._client_count = 0
         logger.info("MJPEGServer: stopped on port %d", self._port)
 
     def _capture_loop(self) -> None:
@@ -327,6 +366,14 @@ class CameraPipeline:
             server = self._servers.get(self._cam_selection)
             streaming = server.streaming if server else False
             fps = server.fps if server else 0.0
+            server_cam1 = self._servers.get(1)
+            server_cam2 = self._servers.get(2)
+            cam1_clients = server_cam1.client_count if server_cam1 else 0
+            cam2_clients = server_cam2.client_count if server_cam2 else 0
+            cam1_streaming = server_cam1.streaming if server_cam1 else False
+            cam2_streaming = server_cam2.streaming if server_cam2 else False
+            cam1_fps = server_cam1.fps if server_cam1 else 0.0
+            cam2_fps = server_cam2.fps if server_cam2 else 0.0
 
         ports = self._stream_ports
         return CameraFrame(
@@ -337,6 +384,12 @@ class CameraPipeline:
             height=self._active_plugin_config.get("height", 0),
             mjpeg_url_cam1=f"http://{{host}}:{ports.get(1, 8080)}/",
             mjpeg_url_cam2=f"http://{{host}}:{ports.get(2, 8081)}/",
+            cam1_clients=cam1_clients,
+            cam2_clients=cam2_clients,
+            cam1_streaming=cam1_streaming,
+            cam2_streaming=cam2_streaming,
+            cam1_fps=cam1_fps,
+            cam2_fps=cam2_fps,
             active_plugin=self._active_plugin_name,
             active_plugin_config=self._active_plugin_config,
             available_plugins=list_plugins(),
@@ -444,12 +497,11 @@ class HttpFileServer:
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, directory=str(static_dir), **kwargs)
 
-            def log_message(self, fmt, *args):
-                logger.debug("HTTP %s - %s", self.address_string(), fmt % args)
+            def log_message(self, format, *args):
+                logger.debug("HTTP %s - %s", self.address_string(), format % args)
 
-        socketserver.TCPServer.allow_reuse_address = True
         try:
-            with socketserver.TCPServer(("", self._port), _Handler) as httpd:
+            with _ThreadingTCPServer(("", self._port), _Handler) as httpd:
                 logger.info(
                     "HttpFileServer: serving %s on port %d",
                     self._static_dir, self._port,

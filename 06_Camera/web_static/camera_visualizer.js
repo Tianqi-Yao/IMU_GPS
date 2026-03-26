@@ -8,23 +8,39 @@
 
 // ── DOM Elements ─────────────────────────────────────────────────────────────
 
-const statusDot     = document.getElementById("statusDot");
-const statusText    = document.getElementById("statusText");
-const mjpegStream   = document.getElementById("mjpegStream");
-const videoOverlay  = document.getElementById("videoOverlay");
-const btnCam1       = document.getElementById("btnCam1");
-const btnCam2       = document.getElementById("btnCam2");
-const streamStatus  = document.getElementById("streamStatus");
-const streamFps     = document.getElementById("streamFps");
-const streamRes     = document.getElementById("streamRes");
-const btnStartStream = document.getElementById("btnStartStream");
-const btnStopStream  = document.getElementById("btnStopStream");
-const mjpegUrl1     = document.getElementById("mjpegUrl1");
-const mjpegUrl2     = document.getElementById("mjpegUrl2");
-const pluginSelect  = document.getElementById("pluginSelect");
-const activePlugin  = document.getElementById("activePlugin");
+const statusDot          = document.getElementById("statusDot");
+const statusText         = document.getElementById("statusText");
+const singleView         = document.getElementById("singleView");
+const dualView           = document.getElementById("dualView");
+const mjpegStream        = document.getElementById("mjpegStream");
+const mjpegStreamCam1    = document.getElementById("mjpegStreamCam1");
+const mjpegStreamCam2    = document.getElementById("mjpegStreamCam2");
+const videoOverlay       = document.getElementById("videoOverlay");
+const videoOverlayCam1   = document.getElementById("videoOverlayCam1");
+const videoOverlayCam2   = document.getElementById("videoOverlayCam2");
+const videoOverlayText   = document.getElementById("videoOverlayText");
+const overlaySpinner     = document.getElementById("overlaySpinner");
+const btnCam1            = document.getElementById("btnCam1");
+const btnCam2            = document.getElementById("btnCam2");
+const btnViewSingle      = document.getElementById("btnViewSingle");
+const btnViewBoth        = document.getElementById("btnViewBoth");
+const streamStatus       = document.getElementById("streamStatus");
+const streamFps          = document.getElementById("streamFps");
+const streamRes          = document.getElementById("streamRes");
+const btnStartStream     = document.getElementById("btnStartStream");
+const btnStopStream      = document.getElementById("btnStopStream");
+const btnStartCam1       = document.getElementById("btnStartCam1");
+const btnStopCam1        = document.getElementById("btnStopCam1");
+const btnStartCam2       = document.getElementById("btnStartCam2");
+const btnStopCam2        = document.getElementById("btnStopCam2");
+const mjpegUrl1          = document.getElementById("mjpegUrl1");
+const mjpegUrl2          = document.getElementById("mjpegUrl2");
+const cam1Clients        = document.getElementById("cam1Clients");
+const cam2Clients        = document.getElementById("cam2Clients");
+const pluginSelect       = document.getElementById("pluginSelect");
+const activePlugin       = document.getElementById("activePlugin");
 const pluginConfigContainer = document.getElementById("pluginConfigContainer");
-const btnApplyPlugin = document.getElementById("btnApplyPlugin");
+const btnApplyPlugin     = document.getElementById("btnApplyPlugin");
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
@@ -35,6 +51,42 @@ let ws = null;
 let reconnectTimer = null;
 let currentCam = 1;
 let lastPluginListHash = "";
+let waitingForFirstFrame = false;
+let forceStreamReload = false;
+let viewMode = "single"; // single | both
+
+function showOverlay(text, loading = false) {
+  videoOverlayText.textContent = text;
+  overlaySpinner.classList.toggle("active", loading);
+  videoOverlay.classList.remove("hidden");
+}
+
+function hideOverlay() {
+  videoOverlay.classList.add("hidden");
+  overlaySpinner.classList.remove("active");
+}
+
+function showDualOverlay(camId, text) {
+  const overlay = camId === 1 ? videoOverlayCam1 : videoOverlayCam2;
+  if (!overlay) return;
+  const textNode = overlay.querySelector("span");
+  if (textNode) textNode.textContent = text;
+  overlay.classList.remove("hidden");
+}
+
+function hideDualOverlay(camId) {
+  const overlay = camId === 1 ? videoOverlayCam1 : videoOverlayCam2;
+  if (!overlay) return;
+  overlay.classList.add("hidden");
+}
+
+function applyViewMode() {
+  const both = viewMode === "both";
+  singleView.classList.toggle("hidden", both);
+  dualView.classList.toggle("hidden", !both);
+  btnViewSingle.classList.toggle("active", !both);
+  btnViewBoth.classList.toggle("active", both);
+}
 
 function connect() {
   ws = new WebSocket(WS_URL);
@@ -87,10 +139,13 @@ function updateUI(data) {
   btnCam2.classList.toggle("active", currentCam === 2);
 
   // Stream status
-  const isStreaming = data.streaming;
+  const cam1Streaming = Boolean(data.cam1_streaming);
+  const cam2Streaming = Boolean(data.cam2_streaming);
+  const isStreaming = currentCam === 1 ? cam1Streaming : cam2Streaming;
+  const selectedFps = currentCam === 1 ? (data.cam1_fps ?? 0) : (data.cam2_fps ?? 0);
   streamStatus.textContent = isStreaming ? "Streaming" : "Stopped";
   streamStatus.style.color = isStreaming ? "var(--green)" : "var(--text-muted)";
-  streamFps.textContent = data.fps.toFixed(1);
+  streamFps.textContent = Number(selectedFps).toFixed(1);
   streamRes.textContent = data.width && data.height
     ? `${data.width}x${data.height}` : "—";
 
@@ -102,6 +157,8 @@ function updateUI(data) {
   mjpegUrl1.textContent = url1;
   mjpegUrl2.href = url2;
   mjpegUrl2.textContent = url2;
+  cam1Clients.textContent = String(data.cam1_clients ?? 0);
+  cam2Clients.textContent = String(data.cam2_clients ?? 0);
 
   // Plugin info
   if (data.active_plugin !== undefined) {
@@ -112,46 +169,149 @@ function updateUI(data) {
     renderPluginConfig(data.available_plugins, data.active_plugin, data.active_plugin_config);
   }
 
-  // Update MJPEG <img> source
-  if (isStreaming) {
+  if (viewMode === "single") {
     const streamUrl = currentCam === 1 ? url1 : url2;
-    if (mjpegStream.src !== streamUrl) {
-      mjpegStream.src = streamUrl;
+    if (isStreaming) {
+      const shouldReload = forceStreamReload || !mjpegStream.src.includes(streamUrl);
+      if (shouldReload) {
+        waitingForFirstFrame = true;
+        showOverlay("Starting camera…", true);
+        const reloadUrl = `${streamUrl}${streamUrl.includes("?") ? "&" : "?"}reload=${Date.now()}`;
+        mjpegStream.src = reloadUrl;
+      }
+      mjpegStream.classList.add("active");
+      if (!waitingForFirstFrame) hideOverlay();
+    } else {
+      waitingForFirstFrame = false;
+      mjpegStream.classList.remove("active");
+      mjpegStream.removeAttribute("src");
+      showOverlay("Stream not active", false);
     }
-    mjpegStream.classList.add("active");
-    videoOverlay.classList.add("hidden");
   } else {
-    mjpegStream.classList.remove("active");
-    mjpegStream.removeAttribute("src");
-    videoOverlay.classList.remove("hidden");
+    const reloadSuffix = forceStreamReload ? `${Date.now()}` : null;
+    renderDualCamera(1, url1, cam1Streaming, reloadSuffix);
+    renderDualCamera(2, url2, cam2Streaming, reloadSuffix);
   }
+
+  forceStreamReload = false;
+}
+
+function renderDualCamera(camId, streamUrl, isStreaming, reloadSuffix = null) {
+  const img = camId === 1 ? mjpegStreamCam1 : mjpegStreamCam2;
+  if (!img) return;
+
+  if (!isStreaming) {
+    img.classList.remove("active");
+    img.removeAttribute("src");
+    showDualOverlay(camId, `Camera ${camId} not active`);
+    return;
+  }
+
+  const shouldReload = !!reloadSuffix || !img.src.includes(streamUrl);
+  if (shouldReload) {
+    const reloadUrl = reloadSuffix
+      ? `${streamUrl}${streamUrl.includes("?") ? "&" : "?"}reload=${reloadSuffix}`
+      : streamUrl;
+    img.src = reloadUrl;
+    showDualOverlay(camId, `Camera ${camId} loading…`);
+  }
+
+  img.classList.add("active");
 }
 
 // ── Controls ─────────────────────────────────────────────────────────────────
 
-btnCam1.addEventListener("click", () => {
-  send({ type: "switch_camera", cam_id: 1 });
-});
-
-btnCam2.addEventListener("click", () => {
-  send({ type: "switch_camera", cam_id: 2 });
-});
-
 btnStartStream.addEventListener("click", () => {
+  waitingForFirstFrame = true;
+  showOverlay("Starting camera…", true);
   send({ type: "start_stream", cam_id: currentCam });
 });
 
 btnStopStream.addEventListener("click", () => {
+  waitingForFirstFrame = false;
+  showOverlay("Stream not active", false);
   send({ type: "stop_stream", cam_id: currentCam });
+});
+
+btnCam1.addEventListener("click", () => {
+  if (currentCam === 1) return;
+  waitingForFirstFrame = true;
+  showOverlay("Switching camera…", true);
+  send({ type: "switch_camera", cam_id: 1 });
+});
+
+btnCam2.addEventListener("click", () => {
+  if (currentCam === 2) return;
+  waitingForFirstFrame = true;
+  showOverlay("Switching camera…", true);
+  send({ type: "switch_camera", cam_id: 2 });
+});
+
+btnStartCam1.addEventListener("click", () => {
+  showOverlay("Starting camera 1…", true);
+  send({ type: "start_stream", cam_id: 1 });
+});
+
+btnStopCam1.addEventListener("click", () => {
+  send({ type: "stop_stream", cam_id: 1 });
+  if (currentCam === 1 && viewMode === "single") {
+    waitingForFirstFrame = false;
+    showOverlay("Stream not active", false);
+  }
+});
+
+btnStartCam2.addEventListener("click", () => {
+  showOverlay("Starting camera 2…", true);
+  send({ type: "start_stream", cam_id: 2 });
+});
+
+btnStopCam2.addEventListener("click", () => {
+  send({ type: "stop_stream", cam_id: 2 });
+  if (currentCam === 2 && viewMode === "single") {
+    waitingForFirstFrame = false;
+    showOverlay("Stream not active", false);
+  }
+});
+
+btnViewSingle.addEventListener("click", () => {
+  viewMode = "single";
+  applyViewMode();
+  waitingForFirstFrame = true;
+  showOverlay("Switching to single view…", true);
+});
+
+btnViewBoth.addEventListener("click", () => {
+  viewMode = "both";
+  applyViewMode();
+});
+
+mjpegStream.addEventListener("load", () => {
+  waitingForFirstFrame = false;
+  hideOverlay();
+});
+
+mjpegStream.addEventListener("error", () => {
+  if (!mjpegStream.src) return;
+  waitingForFirstFrame = true;
+  showOverlay("Waiting for camera…", true);
+});
+
+mjpegStreamCam1.addEventListener("load", () => hideDualOverlay(1));
+mjpegStreamCam2.addEventListener("load", () => hideDualOverlay(2));
+mjpegStreamCam1.addEventListener("error", () => {
+  if (!mjpegStreamCam1.src) return;
+  showDualOverlay(1, "Camera 1 waiting…");
+});
+mjpegStreamCam2.addEventListener("error", () => {
+  if (!mjpegStreamCam2.src) return;
+  showDualOverlay(2, "Camera 2 waiting…");
 });
 
 // ── Plugin Controls ─────────────────────────────────────────────────────────
 
 function updatePluginSelect(plugins, activeName) {
-  // Hash to avoid unnecessary DOM rebuilds
   const hash = plugins.map(p => p.name).join(",");
   if (hash === lastPluginListHash) {
-    // Just update selection
     pluginSelect.value = activeName || "";
     return;
   }
@@ -172,7 +332,6 @@ function renderPluginConfig(plugins, activeName, currentConfig) {
     pluginConfigContainer.innerHTML = "";
     return;
   }
-  // Only rebuild if plugin changed
   if (pluginConfigContainer.dataset.plugin === activeName) return;
   pluginConfigContainer.dataset.plugin = activeName;
   pluginConfigContainer.innerHTML = "";
@@ -204,10 +363,12 @@ btnApplyPlugin.addEventListener("click", () => {
     if (val === "") return;
     config[input.name] = input.type === "number" ? parseInt(val, 10) : val;
   });
+  showOverlay("Applying plugin…", true);
+  forceStreamReload = true;
   send({ type: "switch_plugin", plugin_name: pluginName, config: config });
-  // Force config re-render on next update
   pluginConfigContainer.dataset.plugin = "";
 });
 
 // ── Init ─────────────────────────────────────────────────────────────────────
+applyViewMode();
 connect();
