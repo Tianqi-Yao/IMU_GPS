@@ -124,7 +124,7 @@ function setStatus(online) {
 
 // ── Odometry ─────────────────────────────────────────────────
 // AmigaControlState integers from Amiga SDK
-const AMIGA_STATE = { 0: 'BOOT', 1: 'INIT', 2: 'STOPPED', 3: 'READY', 4: 'ACTIVE', 5: 'ERROR' };
+const AMIGA_STATE = { 0: 'UNKNOWN', 1: 'UNKNOWN', 2: 'UNKNOWN', 3: 'UNKNOWN', 4: 'READY', 5: 'ACTIVE' };
 
 function handleOdom(msg) {
   document.getElementById('odom-v').textContent = (msg.v   != null) ? msg.v.toFixed(3)   : '--';
@@ -204,17 +204,19 @@ function handleNavStatus(msg) {
   else           { overlay.classList.remove('visible'); }
 
   const prog = msg.progress || [0, 0];
+  const headingDeg = (msg.heading_deg != null) ? msg.heading_deg : msg.target_bearing;
+  const headingDir = (msg.heading_dir != null) ? msg.heading_dir : null;
   document.getElementById('nav-progress').textContent    = prog[0] + ' / ' + prog[1];
   document.getElementById('nav-dist').textContent        = (msg.distance_m     != null) ? msg.distance_m.toFixed(1)     : '--';
-  document.getElementById('nav-bearing').textContent     = (msg.target_bearing != null) ? msg.target_bearing.toFixed(0) + '°' : '--';
+  document.getElementById('nav-bearing').textContent     = (headingDeg          != null) ? headingDeg.toFixed(0) + '°'          : '--';
   document.getElementById('nav-mode-disp').textContent   = (msg.nav_mode    || '--').toUpperCase();
   document.getElementById('nav-filter-disp').textContent = (msg.filter_mode || '--').toUpperCase();
   document.getElementById('nav-tol').textContent         = (msg.tolerance_m != null) ? msg.tolerance_m.toFixed(1) : '--';
 
   // Update heading display
-  if (msg.target_bearing != null) {
-    document.getElementById('nav-heading').textContent  = msg.target_bearing.toFixed(1) + '°';
-    document.getElementById('nav-cardinal').textContent = bearingToCardinal(msg.target_bearing);
+  if (headingDeg != null) {
+    document.getElementById('nav-heading').textContent  = headingDeg.toFixed(1) + '°';
+    document.getElementById('nav-cardinal').textContent = headingDir || bearingToCardinal(headingDeg);
   }
 }
 

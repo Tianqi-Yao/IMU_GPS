@@ -95,7 +95,7 @@ class _StaticHandler(SimpleHTTPRequestHandler):
         else:
             super().do_GET()
 
-    def log_message(self, fmt, *args):
+    def log_message(self, format, *args):
         pass
 
 
@@ -153,6 +153,8 @@ class NavBridgeClient:
                                 "progress":       [nav.get("reached_count", 0),
                                                    nav.get("total_waypoints", 0)],
                                 "distance_m":     nav.get("target_distance_m"),
+                                "heading_deg":    nav.get("heading_deg"),
+                                "heading_dir":    nav.get("heading_dir"),
                                 "target_bearing": nav.get("heading_deg"),
                                 "nav_mode":       nav.get("nav_mode", "--"),
                                 "filter_mode":    nav.get("filter_mode", "--"),
