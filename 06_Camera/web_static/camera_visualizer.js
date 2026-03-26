@@ -39,6 +39,9 @@ const pluginSelect       = document.getElementById("pluginSelect");
 const activePlugin       = document.getElementById("activePlugin");
 const pluginConfigContainer = document.getElementById("pluginConfigContainer");
 const btnApplyPlugin     = document.getElementById("btnApplyPlugin");
+const btnSnapshot        = document.getElementById("btnSnapshot");
+const snapshotRow        = document.getElementById("snapshotRow");
+const snapshotLink       = document.getElementById("snapshotLink");
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
@@ -113,7 +116,19 @@ function connect() {
   ws.onmessage = (evt) => {
     try {
       const data = JSON.parse(evt.data);
-      updateUI(data);
+      if (data.type === "snapshot_ready") {
+        btnSnapshot.disabled = false;
+        btnSnapshot.textContent = "Capture Frame";
+        snapshotLink.href = data.url;
+        snapshotRow.style.display = "";
+        window.open(data.url, "_blank");
+      } else if (data.type === "snapshot_error") {
+        btnSnapshot.disabled = false;
+        btnSnapshot.textContent = "Capture Frame";
+        alert("Snapshot error: " + data.error);
+      } else {
+        updateUI(data);
+      }
     } catch (e) {
       console.warn("Parse error:", e);
     }
@@ -500,6 +515,14 @@ pluginSelect.addEventListener("change", () => {
     pluginConfigContainer.dataset.plugin = "";
     renderPluginConfig(lastPluginList, selectedName, {});
   }
+});
+
+// ── Snapshot ─────────────────────────────────────────────────────────────────
+
+btnSnapshot.addEventListener("click", () => {
+  btnSnapshot.disabled = true;
+  btnSnapshot.textContent = "Capturing…";
+  send({ type: "snapshot", cam_id: currentCam });
 });
 
 // ── Init ─────────────────────────────────────────────────────────────────────

@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import datetime
 import http.server
 import importlib
 import json
@@ -180,7 +182,8 @@ class CameraDevice:
         self._device = None
         self._pipeline = None
         self._queues: dict[str, object] = {}
-        self._last_frames: dict[str, np.ndarray] = {}  # cache last good frame per stream
+        self._last_frames: dict[str, np.ndarray] = {}      # colorised frames for display
+        self._last_raw_frames: dict[str, np.ndarray] = {}  # original frames before colorisation
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -244,6 +247,7 @@ class CameraDevice:
         """Stop pipeline and release device."""
         self._queues = {}
         self._last_frames = {}
+        self._last_raw_frames = {}
         if self._pipeline is not None:
             try:
                 self._pipeline.stop()
@@ -276,7 +280,9 @@ class CameraDevice:
             try:
                 pkt = q.tryGet()
                 if pkt is not None:
-                    frame = pkt.getCvFrame()
+                    raw = pkt.getCvFrame()
+                    self._last_raw_frames[name] = raw  # store before colorisation
+                    frame = raw
                     # depth/disparity frames are single-channel; convert for display
                     if name in ("depth", "disparity") and frame.ndim == 2:
                         frame = cv2.applyColorMap(
@@ -293,6 +299,13 @@ class CameraDevice:
 
     def available_streams(self) -> list[str]:
         return list(self._queues.keys())
+
+    def get_raw_snapshot(self) -> dict[str, np.ndarray | None]:
+        """Return copies of the most recent raw (pre-colorisation) frames."""
+        return {
+            k: v.copy() if v is not None else None
+            for k, v in self._last_raw_frames.items()
+        }
 
     @property
     def is_open(self) -> bool:
@@ -327,6 +340,8 @@ class MJPEGServer:
         self._client_lock = threading.Lock()
         self._processor = None
         self._processor_lock = threading.Lock()
+        self._latest_output_frame: np.ndarray | None = None
+        self._output_lock = threading.Lock()
 
     @property
     def fps(self) -> float:
@@ -435,6 +450,11 @@ class MJPEGServer:
         except Exception as exc:
             logger.warning("MJPEGServer: processor reconfigure error: %s", exc)
 
+    def get_latest_output_frame(self) -> np.ndarray | None:
+        with self._output_lock:
+            f = self._latest_output_frame
+            return f.copy() if f is not None else None
+
     def _capture_loop(self) -> None:
         """Background thread: get frames from device, process, encode to JPEG."""
         while self._running:
@@ -452,6 +472,8 @@ class MJPEGServer:
                 output = None
 
             if output is not None:
+                with self._output_lock:
+                    self._latest_output_frame = output
                 ok, buf = cv2.imencode(
                     ".jpg", output,
                     [cv2.IMWRITE_JPEG_QUALITY, self._quality],
@@ -466,11 +488,12 @@ class MJPEGServer:
     def _tick_fps(self) -> None:
         now = time.monotonic()
         self._fps_tracker_times.append(now)
-        if len(self._fps_tracker_times) > 60:
-            self._fps_tracker_times = self._fps_tracker_times[-60:]
+        # 只保留最近 2 秒内的时间戳
+        cutoff = now - 2.0
+        self._fps_tracker_times = [t for t in self._fps_tracker_times if t >= cutoff]
         if len(self._fps_tracker_times) >= 2:
             elapsed = self._fps_tracker_times[-1] - self._fps_tracker_times[0]
-            if elapsed > 0:
+            if elapsed >= 0.5:  # 至少积累 0.5 秒再输出，避免启动瞬间数值虚高
                 self._current_fps = (len(self._fps_tracker_times) - 1) / elapsed
 
 
@@ -672,6 +695,27 @@ class CameraPipeline:
             available_streams=dev1.available_streams() if dev1 else [],
         )
 
+    def take_snapshot(self, cam_id: int, snapshots_dir: Path) -> str:
+        """Capture a frame from cam_id and save an interactive HTML inspector.
+
+        Returns the relative URL path (e.g. '/snapshots/snap_xxx.html').
+        """
+        srv = self._servers.get(cam_id)
+        dev = self._devices.get(cam_id)
+        if srv is None or dev is None:
+            raise RuntimeError(f"Camera {cam_id} not available")
+        output_frame = srv.get_latest_output_frame()
+        if output_frame is None:
+            raise RuntimeError("No frame available — is the stream running?")
+        raw_frames = dev.get_raw_snapshot()
+        snapshots_dir.mkdir(parents=True, exist_ok=True)
+        ts_file = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"snap_{ts_file}.html"
+        html = _generate_snapshot_html(output_frame, raw_frames, self._active_plugin_name)
+        (snapshots_dir / filename).write_text(html, encoding="utf-8")
+        logger.info("Snapshot saved: %s/%s", snapshots_dir, filename)
+        return f"/snapshots/{filename}"
+
     def shutdown(self) -> None:
         """Stop all HTTP servers and close all camera devices."""
         for srv in self._servers.values():
@@ -684,6 +728,144 @@ class CameraPipeline:
                 dev.close()
             except Exception:
                 pass
+
+
+# ── Snapshot HTML generator ───────────────────────────────────────────────────
+
+def _generate_snapshot_html(
+    output_frame: np.ndarray,
+    raw_frames: dict[str, np.ndarray | None],
+    plugin_name: str,
+) -> str:
+    """Return a self-contained HTML page for interactive pixel inspection."""
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    h, w = output_frame.shape[:2]
+
+    _, png_buf = cv2.imencode(".png", output_frame)
+    img_b64 = base64.b64encode(png_buf.tobytes()).decode()
+
+    raw_data: dict = {}
+    for name, arr in raw_frames.items():
+        if arr is None:
+            continue
+        if arr.dtype == np.uint16:
+            dtype_str = "uint16"
+        elif arr.dtype == np.float32:
+            dtype_str = "float32"
+        else:
+            dtype_str = "uint8"
+            arr = arr.astype(np.uint8)
+        raw_data[name] = {
+            "dtype": dtype_str,
+            "shape": list(arr.shape),
+            "b64": base64.b64encode(arr.tobytes()).decode(),
+        }
+
+    raw_json_str = json.dumps(raw_data)
+
+    return (
+        _SNAPSHOT_HTML
+        .replace("__TS__", ts)
+        .replace("__PLUGIN__", plugin_name)
+        .replace("__W__", str(w))
+        .replace("__H__", str(h))
+        .replace("__IMG_B64__", img_b64)
+        .replace("__RAW_JSON__", raw_json_str)
+    )
+
+
+_SNAPSHOT_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Snapshot __TS__</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #111; color: #ddd; font-family: monospace; padding: 14px; }
+h2 { font-size: 12px; color: #777; margin-bottom: 10px; letter-spacing: .03em; }
+#wrap { display: inline-block; cursor: crosshair; }
+canvas { display: block; max-width: 100%; }
+#tip {
+  position: fixed; display: none; pointer-events: none; z-index: 99;
+  background: rgba(10,10,10,.92); border: 1px solid #333; border-radius: 5px;
+  padding: 8px 12px; font-size: 12px; line-height: 1.7; min-width: 150px;
+}
+.c0 { color: #888; }
+.c1 { color: #9cf; }
+.c2 { color: #9f9; }
+.cl { color: #fb9; }
+</style>
+</head>
+<body>
+<h2>__TS__ &nbsp;|&nbsp; plugin: __PLUGIN__ &nbsp;|&nbsp; __W__&times;__H__</h2>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="tip"></div>
+<script>
+const IMG_B64 = "__IMG_B64__";
+const RAW = __RAW_JSON__;
+
+// decode raw streams into typed arrays
+const streams = {};
+for (const [name, info] of Object.entries(RAW)) {
+  const bytes = Uint8Array.from(atob(info.b64), c => c.charCodeAt(0));
+  let arr;
+  if (info.dtype === "uint16") arr = new Uint16Array(bytes.buffer);
+  else if (info.dtype === "float32") arr = new Float32Array(bytes.buffer);
+  else arr = bytes;
+  arr._shape = info.shape;
+  streams[name] = arr;
+}
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const img = new Image();
+img.onload = () => { canvas.width = img.width; canvas.height = img.height; ctx.drawImage(img, 0, 0); };
+img.src = "data:image/png;base64," + IMG_B64;
+
+const tip = document.getElementById("tip");
+
+function rawVal(name, x, y) {
+  const arr = streams[name];
+  if (!arr) return null;
+  const [rh, rw, ...rest] = arr._shape;
+  if (x < 0 || x >= rw || y < 0 || y >= rh) return null;
+  if (rest.length === 1) {
+    const C = rest[0];  // e.g. rgb: HxWx3 stored as BGR
+    const b = arr[y * rw * C + x * C + 0];
+    const g = arr[y * rw * C + x * C + 1];
+    const r = arr[y * rw * C + x * C + 2];
+    return `R=${r} G=${g} B=${b}`;
+  }
+  return String(arr[y * rw + x]);
+}
+
+const UNITS = { depth: " mm", disparity: " px" };
+
+canvas.addEventListener("mousemove", e => {
+  const r = canvas.getBoundingClientRect();
+  const x = Math.floor((e.clientX - r.left) * canvas.width  / r.width);
+  const y = Math.floor((e.clientY - r.top)  * canvas.height / r.height);
+  if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) return;
+
+  const px = ctx.getImageData(x, y, 1, 1).data;
+  let html = `<div class="c0">(${x}, ${y})</div>`;
+  html += `<div class="c1">canvas &nbsp;R=${px[0]} G=${px[1]} B=${px[2]}</div>`;
+  for (const name of Object.keys(streams)) {
+    const v = rawVal(name, x, y);
+    if (v !== null)
+      html += `<div><span class="cl">${name}:</span> <span class="c2">${v}${UNITS[name]||""}</span></div>`;
+  }
+
+  tip.innerHTML = html;
+  tip.style.display = "block";
+  const tx = e.clientX + 16, ty = e.clientY + 16;
+  tip.style.left = (tx + tip.offsetWidth  > window.innerWidth  ? e.clientX - tip.offsetWidth  - 8 : tx) + "px";
+  tip.style.top  = (ty + tip.offsetHeight > window.innerHeight ? e.clientY - tip.offsetHeight - 8 : ty) + "px";
+});
+canvas.addEventListener("mouseleave", () => tip.style.display = "none");
+</script>
+</body>
+</html>"""
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -729,7 +911,9 @@ class WebSocketServer:
             async for raw in websocket:
                 if self._on_client_message is not None:
                     try:
-                        self._on_client_message(raw)
+                        reply = self._on_client_message(raw)
+                        if reply:
+                            await websocket.send(reply)
                     except Exception as exc:
                         logger.warning(
                             "WebSocketServer: error handling message from %s: %s",
@@ -872,14 +1056,14 @@ class CameraBridge:
         )
         await ws_server.serve()
 
-    def _handle_client_message(self, raw: str) -> None:
+    def _handle_client_message(self, raw: str) -> str | None:
         try:
             msg = json.loads(raw)
         except json.JSONDecodeError as exc:
             logger.warning(
                 "CameraBridge: invalid JSON: %s | raw: %s", exc, raw[:120]
             )
-            return
+            return None
 
         msg_type = msg.get("type", "")
 
@@ -907,8 +1091,19 @@ class CameraBridge:
             config = msg.get("config", {})
             self._pipeline.update_plugin_config(config)
 
+        elif msg_type == "snapshot":
+            cam_id = msg.get("cam_id", self._pipeline.cam_selection)
+            snapshots_dir = self._static_dir / "snapshots"
+            try:
+                url = self._pipeline.take_snapshot(cam_id, snapshots_dir)
+                return json.dumps({"type": "snapshot_ready", "url": url})
+            except Exception as exc:
+                logger.warning("CameraBridge: snapshot error: %s", exc)
+                return json.dumps({"type": "snapshot_error", "error": str(exc)})
+
         else:
             logger.debug("CameraBridge: unknown message type: %s", msg_type)
+        return None
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
