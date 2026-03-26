@@ -33,7 +33,6 @@ class SimpleColorSource(FrameSource):
     @classmethod
     def config_schema(cls) -> list[dict]:
         return [
-            {"key": "device_ip", "type": "str", "default": None, "label": "Device IP"},
             {"key": "fps", "type": "int", "default": 30, "label": "FPS"},
             {"key": "width", "type": "int", "default": 1280, "label": "Width"},
             {"key": "height", "type": "int", "default": 720, "label": "Height"},

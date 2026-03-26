@@ -57,6 +57,9 @@ class FrameSource(abc.ABC):
     def get_frame(self) -> np.ndarray | None:
         """Return latest BGR frame or None."""
 
+    def reconfigure(self, **kwargs) -> None:
+        """Apply updated config without reopening the camera (optional override)."""
+
 
 # ── Plugin Registry ─────────────────────────────────────────────────────────
 

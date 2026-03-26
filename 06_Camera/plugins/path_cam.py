@@ -16,10 +16,8 @@ import logging
 
 import numpy as np
 
-try:
-    import cv2
-except ImportError:
-    cv2 = None
+import cv2
+
 
 from . import FrameProcessor, register_processor
 
@@ -60,8 +58,16 @@ class PathCamProcessor(FrameProcessor):
     @classmethod
     def config_schema(cls) -> list[dict]:
         return [
-            {"key": "display_mode", "type": "str", "default": "target",
-             "label": "Display Mode (target/composite)"},
+            {
+                "key": "display_mode",
+                "type": "enum",
+                "default": "target",
+                "label": "Display Mode",
+                "options": [
+                    {"value": "target", "label": "target"},
+                    {"value": "composite", "label": "composite"},
+                ],
+            },
         ]
 
     def __init__(self, **kwargs) -> None:
@@ -74,9 +80,6 @@ class PathCamProcessor(FrameProcessor):
 
     def process(self, img: np.ndarray) -> np.ndarray:
         """Apply yellow detection and contour scoring; return composed view."""
-        if cv2 is None:
-            return img
-
         h, w = img.shape[:2]
 
         # HSV yellow mask

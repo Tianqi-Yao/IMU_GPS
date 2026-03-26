@@ -358,6 +358,79 @@ header h1 {
   border-color: var(--accent);
 }
 
+.config-field-title {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-bottom: 4px;
+}
+
+.config-field-radio {
+  display: block;
+  margin-top: 8px;
+}
+
+.radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.radio-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+}
+
+.radio-item input {
+  width: auto;
+  margin: 0;
+}
+
+.config-field-checkbox {
+  justify-content: flex-start;
+  margin-top: 6px;
+}
+
+.checkbox-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+}
+
+.checkbox-item input {
+  width: auto;
+  margin: 0;
+}
+
+.config-field-range {
+  align-items: center;
+  margin-top: 6px;
+}
+
+.range-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.range-wrap input[type="range"] {
+  width: 140px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.range-value {
+  min-width: 28px;
+  text-align: right;
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.78rem;
+}
+
 .btn-accent {
   width: 100%;
   padding: 8px;

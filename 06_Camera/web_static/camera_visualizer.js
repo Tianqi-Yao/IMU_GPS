@@ -27,8 +27,6 @@ const btnViewBoth        = document.getElementById("btnViewBoth");
 const streamStatus       = document.getElementById("streamStatus");
 const streamFps          = document.getElementById("streamFps");
 const streamRes          = document.getElementById("streamRes");
-const btnStartStream     = document.getElementById("btnStartStream");
-const btnStopStream      = document.getElementById("btnStopStream");
 const btnStartCam1       = document.getElementById("btnStartCam1");
 const btnStopCam1        = document.getElementById("btnStopCam1");
 const btnStartCam2       = document.getElementById("btnStartCam2");
@@ -59,6 +57,8 @@ let forceStreamReload = false;
 let viewMode = "single"; // single | both
 let applyingPlugin = false; // plugin apply feedback flag
 let pluginApplyTimer = null;
+let activePluginName = "";
+let liveUpdateTimer = null;
 
 function showOverlay(text, loading = false) {
   videoOverlayText.textContent = text;
@@ -169,6 +169,7 @@ function updateUI(data) {
 
   // Plugin info
   if (data.active_plugin !== undefined) {
+    activePluginName = data.active_plugin || "";
     activePlugin.textContent = data.active_plugin || "—";
   }
   if (data.available_plugins) {
@@ -232,18 +233,6 @@ function renderDualCamera(camId, streamUrl, isStreaming, reloadSuffix = null) {
 }
 
 // ── Controls ─────────────────────────────────────────────────────────────────
-
-btnStartStream.addEventListener("click", () => {
-  waitingForFirstFrame = true;
-  showOverlay("Starting camera…", true);
-  send({ type: "start_stream", cam_id: currentCam });
-});
-
-btnStopStream.addEventListener("click", () => {
-  waitingForFirstFrame = false;
-  showOverlay("Stream not active", false);
-  send({ type: "stop_stream", cam_id: currentCam });
-});
 
 btnCam1.addEventListener("click", () => {
   if (currentCam === 1) return;
@@ -400,19 +389,106 @@ function renderPluginConfig(plugins, activeName, currentConfig) {
   plugin.config_schema.forEach(field => {
     const row = document.createElement("div");
     row.className = "config-field";
-    const label = document.createElement("label");
-    label.textContent = field.label || field.key;
-    label.setAttribute("for", "cfg_" + field.key);
-    const input = document.createElement("input");
-    input.id = "cfg_" + field.key;
-    input.name = field.key;
-    input.type = field.type === "int" ? "number" : "text";
-    const val = currentConfig && currentConfig[field.key] != null
-      ? currentConfig[field.key] : (field.default != null ? field.default : "");
-    input.value = val;
-    input.placeholder = field.default != null ? String(field.default) : "";
-    row.appendChild(label);
-    row.appendChild(input);
+    const value = currentConfig && currentConfig[field.key] != null
+      ? currentConfig[field.key]
+      : (field.default != null ? field.default : "");
+
+    if (field.type === "enum" && Array.isArray(field.options) && field.options.length > 0) {
+      row.classList.add("config-field-radio");
+      const title = document.createElement("div");
+      title.className = "config-field-title";
+      title.textContent = field.label || field.key;
+      row.appendChild(title);
+
+      const radioGroup = document.createElement("div");
+      radioGroup.className = "radio-group";
+      field.options.forEach((opt, index) => {
+        const optVal = typeof opt === "string" ? opt : opt.value;
+        const optLabel = typeof opt === "string" ? opt : (opt.label || opt.value);
+        const item = document.createElement("label");
+        item.className = "radio-item";
+        const input = document.createElement("input");
+        input.type = "radio";
+        input.name = field.key;
+        input.value = String(optVal);
+        input.dataset.cfgType = "enum";
+        input.id = `cfg_${field.key}_${index}`;
+        input.checked = String(value) === String(optVal);
+        const text = document.createElement("span");
+        text.textContent = String(optLabel);
+        item.appendChild(input);
+        item.appendChild(text);
+        radioGroup.appendChild(item);
+      });
+      row.appendChild(radioGroup);
+    } else if (field.type === "bool") {
+      row.classList.add("config-field-checkbox");
+      const label = document.createElement("label");
+      label.className = "checkbox-item";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.name = field.key;
+      input.dataset.cfgType = "bool";
+      input.checked = Boolean(value);
+      const text = document.createElement("span");
+      text.textContent = field.label || field.key;
+      label.appendChild(input);
+      label.appendChild(text);
+      row.appendChild(label);
+    } else if (field.type === "range") {
+      row.classList.add("config-field-range");
+      const label = document.createElement("label");
+      label.textContent = field.label || field.key;
+      label.setAttribute("for", "cfg_" + field.key);
+
+      const sliderWrap = document.createElement("div");
+      sliderWrap.className = "range-wrap";
+
+      const input = document.createElement("input");
+      input.id = "cfg_" + field.key;
+      input.name = field.key;
+      input.type = "range";
+      input.min = String(field.min ?? 0);
+      input.max = String(field.max ?? 100);
+      input.step = String(field.step ?? 1);
+      input.value = String(value === "" ? (field.default ?? 0) : value);
+      input.dataset.cfgType = "range";
+
+      const valueText = document.createElement("span");
+      valueText.className = "range-value";
+      valueText.textContent = String(input.value);
+
+      input.addEventListener("input", () => {
+        valueText.textContent = input.value;
+        if (pluginSelect.value !== activePluginName) return;
+        clearTimeout(liveUpdateTimer);
+        liveUpdateTimer = setTimeout(() => {
+          send({
+            type: "update_plugin_config",
+            config: { [field.key]: parseInt(input.value, 10) },
+          });
+        }, 120);
+      });
+
+      sliderWrap.appendChild(input);
+      sliderWrap.appendChild(valueText);
+      row.appendChild(label);
+      row.appendChild(sliderWrap);
+    } else {
+      const label = document.createElement("label");
+      label.textContent = field.label || field.key;
+      label.setAttribute("for", "cfg_" + field.key);
+      const input = document.createElement("input");
+      input.id = "cfg_" + field.key;
+      input.name = field.key;
+      input.type = field.type === "int" ? "number" : "text";
+      input.dataset.cfgType = field.type === "int" ? "int" : "str";
+      input.value = value;
+      input.placeholder = field.default != null ? String(field.default) : "";
+      row.appendChild(label);
+      row.appendChild(input);
+    }
+
     pluginConfigContainer.appendChild(row);
   });
 }
@@ -440,10 +516,21 @@ btnApplyPlugin.addEventListener("click", () => {
   const pluginName = pluginSelect.value;
   pendingPluginSelection = pluginName;
   const config = {};
-  pluginConfigContainer.querySelectorAll("input").forEach(input => {
+
+  pluginConfigContainer.querySelectorAll('input[type="checkbox"]').forEach(input => {
+    config[input.name] = input.checked;
+  });
+
+  pluginConfigContainer.querySelectorAll('input[type="radio"]:checked').forEach(input => {
+    config[input.name] = input.value;
+  });
+
+  pluginConfigContainer.querySelectorAll('input[type="number"], input[type="text"], input[type="range"]').forEach(input => {
     const val = input.value.trim();
     if (val === "") return;
-    config[input.name] = input.type === "number" ? parseInt(val, 10) : val;
+    config[input.name] = input.type === "number" || input.type === "range"
+      ? parseInt(val, 10)
+      : val;
   });
 
   clearTimeout(pluginApplyTimer);

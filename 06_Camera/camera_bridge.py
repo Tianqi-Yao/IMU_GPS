@@ -244,6 +244,28 @@ class MJPEGServer:
         with self._processor_lock:
             self._processor = processor
 
+    def reconfigure_processor(self, **kwargs) -> None:
+        """Update processor config in-place when supported."""
+        with self._processor_lock:
+            proc = self._processor
+        if proc is None:
+            return
+        try:
+            proc.reconfigure(**kwargs)
+        except Exception as exc:
+            logger.warning("MJPEGServer: processor reconfigure error: %s", exc)
+
+    def reconfigure_source(self, **kwargs) -> None:
+        """Update source config in-place when supported."""
+        source = self._source
+        reconfigure = getattr(source, "reconfigure", None)
+        if reconfigure is None:
+            return
+        try:
+            reconfigure(**kwargs)
+        except Exception as exc:
+            logger.warning("MJPEGServer: source reconfigure error: %s", exc)
+
     def stop(self) -> None:
         """Stop capture and HTTP server, release frame source."""
         self._running = False
@@ -428,6 +450,26 @@ class CameraPipeline:
                 "CameraPipeline: source switched to '%s' (stream restarted)", plugin_name
             )
 
+    def update_plugin_config(self, config: dict) -> None:
+        """Update active plugin config, preferring in-place runtime reconfigure."""
+        if not isinstance(config, dict):
+            return
+        with self._lock:
+            merged = {**self._active_plugin_config, **config}
+            self._active_plugin_config = merged
+            active_name = self._active_plugin_name
+            servers = list(self._servers.values())
+
+        if is_processor(active_name):
+            for srv in servers:
+                srv.reconfigure_processor(**merged)
+            logger.info("CameraPipeline: processor config updated in-place")
+            return
+
+        for srv in servers:
+            srv.reconfigure_source(**merged)
+        logger.info("CameraPipeline: source config updated in-place")
+
     def get_status(self) -> CameraFrame:
         """Return current status as a CameraFrame dataclass."""
         with self._lock:
@@ -448,8 +490,8 @@ class CameraPipeline:
             cam_selection=self._cam_selection,
             streaming=streaming,
             fps=fps,
-            width=self._active_plugin_config.get("width", 0),
-            height=self._active_plugin_config.get("height", 0),
+            width=self._active_plugin_config.get("width", self._active_plugin_config.get("rgb_width", 0)),
+            height=self._active_plugin_config.get("height", self._active_plugin_config.get("rgb_height", 0)),
             mjpeg_url_cam1=f"http://{{host}}:{ports.get(1, 8080)}/",
             mjpeg_url_cam2=f"http://{{host}}:{ports.get(2, 8081)}/",
             cam1_clients=cam1_clients,
@@ -704,9 +746,7 @@ class CameraBridge:
 
         elif msg_type == "update_plugin_config":
             config = msg.get("config", {})
-            self._pipeline.switch_plugin(
-                self._pipeline._active_plugin_name, config,
-            )
+            self._pipeline.update_plugin_config(config)
 
         else:
             logger.debug("CameraBridge: unknown message type: %s", msg_type)
