@@ -41,9 +41,11 @@ try:
 except ModuleNotFoundError:
     _plugins_mod = importlib.import_module(f"{__package__}.plugins")
 
-FrameSource = _plugins_mod.FrameSource
-get_plugin = _plugins_mod.get_plugin
-list_plugins = _plugins_mod.list_plugins
+FrameSource   = _plugins_mod.FrameSource
+get_plugin    = _plugins_mod.get_plugin
+list_plugins  = _plugins_mod.list_plugins
+get_processor = _plugins_mod.get_processor
+is_processor  = _plugins_mod.is_processor
 
 
 class _ThreadingTCPServer(socketserver.ThreadingTCPServer):
@@ -152,6 +154,8 @@ class MJPEGServer:
         self._current_fps: float = 0.0
         self._client_count = 0
         self._client_lock = threading.Lock()
+        self._processor = None          # optional FrameProcessor
+        self._processor_lock = threading.Lock()
 
     @property
     def fps(self) -> float:
@@ -166,16 +170,16 @@ class MJPEGServer:
         with self._client_lock:
             return self._client_count
 
-    def start(self) -> None:
+    def start(self) -> bool:
         """Open the frame source and start capture + HTTP server threads."""
         if self._running:
-            return
+            return True
 
         try:
             self._source.open()
         except Exception as exc:
             logger.error("MJPEGServer: cannot open source: %s", exc)
-            return
+            return False
 
         self._running = True
 
@@ -233,6 +237,12 @@ class MJPEGServer:
                 logger.error("MJPEGServer: HTTP server error on port %d: %s", self._port, exc)
 
         threading.Thread(target=_run_http, daemon=True, name=f"mjpeg-http-{self._port}").start()
+        return True
+
+    def set_processor(self, processor) -> None:
+        """Swap the active FrameProcessor without restarting the stream."""
+        with self._processor_lock:
+            self._processor = processor
 
     def stop(self) -> None:
         """Stop capture and HTTP server, release frame source."""
@@ -259,6 +269,13 @@ class MJPEGServer:
         while self._running:
             frame = self._source.get_frame()
             if frame is not None:
+                with self._processor_lock:
+                    proc = self._processor
+                if proc is not None:
+                    try:
+                        frame = proc.process(frame)
+                    except Exception as exc:
+                        logger.warning("MJPEGServer: processor error: %s", exc)
                 ok, buf = cv2.imencode(
                     ".jpg", frame,
                     [cv2.IMWRITE_JPEG_QUALITY, self._quality],
@@ -317,17 +334,39 @@ class CameraPipeline:
         cam_id = cam_id or self._cam_selection
         with self._lock:
             if cam_id in self._servers:
-                return  # already running
+                # Drop stale/non-running server handles so stream can recover.
+                if self._servers[cam_id].streaming:
+                    return  # already running
+                self._servers.pop(cam_id, None)
             plugin_cls = get_plugin(self._active_plugin_name)
             # Merge per-cam base config with active plugin config
             config = {**self._cam_configs.get(cam_id, {}), **self._active_plugin_config}
-            source = plugin_cls(**config)
             port = self._stream_ports.get(cam_id, 8080)
-            server = MJPEGServer(source, port, self._quality)
-            server.start()
-            self._servers[cam_id] = server
-            logger.info("CameraPipeline: started camera %d stream on port %d (plugin=%s)",
-                        cam_id, port, self._active_plugin_name)
+
+            # Retry once to avoid transient device release/start timing issues.
+            for attempt in (1, 2):
+                source = plugin_cls(**config)
+                server = MJPEGServer(source, port, self._quality)
+                started = server.start()
+                if started and server.streaming:
+                    self._servers[cam_id] = server
+                    logger.info(
+                        "CameraPipeline: started camera %d stream on port %d (plugin=%s)",
+                        cam_id, port, self._active_plugin_name,
+                    )
+                    return
+                logger.warning(
+                    "CameraPipeline: start camera %d failed on attempt %d/2",
+                    cam_id, attempt,
+                )
+                server.stop()
+                if attempt == 1:
+                    time.sleep(0.2)
+
+            logger.error(
+                "CameraPipeline: unable to start camera %d stream after retries",
+                cam_id,
+            )
 
     def stop_stream(self, cam_id: int | None = None) -> None:
         """Stop the MJPEG stream for the given camera (or current selection)."""
@@ -347,18 +386,47 @@ class CameraPipeline:
         logger.info("CameraPipeline: switched to camera %d", cam_id)
 
     def switch_plugin(self, plugin_name: str, config: dict | None = None) -> None:
-        """Stop current streams, switch plugin, restart previously active streams."""
-        with self._lock:
-            was_streaming = list(self._servers.keys())
+        """Switch active plugin or processor.
+
+        If plugin_name is a FrameProcessor, the camera stream keeps running and
+        only the image-processing step is swapped (instant, no restart).
+        If plugin_name is a FrameSource, the stream is restarted with the new source.
+        Switching back to a FrameSource also clears any active processor.
+        """
+        if is_processor(plugin_name):
+            # ── Processor swap: camera keeps running ──────────────────────────
+            proc_cls = get_processor(plugin_name)
+            cfg = {**self._active_plugin_config, **(config or {})}
+            processor = proc_cls(**cfg)
+            with self._lock:
+                self._active_plugin_name = plugin_name
+                if config is not None:
+                    self._active_plugin_config = config
+                servers = list(self._servers.values())
+            for srv in servers:
+                srv.set_processor(processor)
+            logger.info(
+                "CameraPipeline: processor switched to '%s' (no restart)", plugin_name
+            )
+        else:
+            # ── Source swap: restart stream with new FrameSource ──────────────
+            # Validate first so we don't stop current streams for invalid input.
+            get_plugin(plugin_name)
+            with self._lock:
+                was_streaming = list(self._servers.keys())
+                for cid in was_streaming:
+                    # Clear processor before stopping so the old proc isn't
+                    # referenced after the camera device closes.
+                    self._servers[cid].set_processor(None)
+                    self._servers.pop(cid).stop()
+                self._active_plugin_name = plugin_name
+                if config is not None:
+                    self._active_plugin_config = config
             for cid in was_streaming:
-                self._servers.pop(cid).stop()
-            self._active_plugin_name = plugin_name
-            if config is not None:
-                self._active_plugin_config = config
-        # Restart outside lock
-        for cid in was_streaming:
-            self.start_stream(cid)
-        logger.info("CameraPipeline: switched to plugin '%s'", plugin_name)
+                self.start_stream(cid)
+            logger.info(
+                "CameraPipeline: source switched to '%s' (stream restarted)", plugin_name
+            )
 
     def get_status(self) -> CameraFrame:
         """Return current status as a CameraFrame dataclass."""

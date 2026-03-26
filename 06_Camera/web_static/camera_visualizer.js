@@ -53,6 +53,7 @@ let currentCam = 1;
 let lastPluginListHash = "";
 let lastActivePlugin = "";
 let lastPluginList = [];
+let pendingPluginSelection = null;
 let waitingForFirstFrame = false;
 let forceStreamReload = false;
 let viewMode = "single"; // single | both
@@ -172,7 +173,12 @@ function updateUI(data) {
   }
   if (data.available_plugins) {
     updatePluginSelect(data.available_plugins, data.active_plugin);
-    renderPluginConfig(data.available_plugins, data.active_plugin, data.active_plugin_config);
+    // Render config for the user's current dropdown selection, not the server's active plugin.
+    // When the server confirms the switch, lastActivePlugin updates and the dropdown syncs,
+    // at which point pluginSelect.value === data.active_plugin naturally.
+    const selectedPlugin = pluginSelect.value || data.active_plugin;
+    const selectedConfig = selectedPlugin === data.active_plugin ? data.active_plugin_config : {};
+    renderPluginConfig(data.available_plugins, selectedPlugin, selectedConfig);
   }
 
   if (viewMode === "single") {
@@ -293,14 +299,12 @@ btnViewBoth.addEventListener("click", () => {
 
 mjpegStream.addEventListener("load", () => {
   waitingForFirstFrame = false;
-  // If applying plugin, show success and hide overlay after a brief moment for visibility
   if (applyingPlugin) {
+    finishApply();
     videoOverlayText.textContent = "Plugin applied ✓";
     overlaySpinner.classList.remove("active");
-    clearTimeout(pluginApplyTimer);
     pluginApplyTimer = setTimeout(() => {
       videoOverlay.classList.add("hidden");
-      applyingPlugin = false;
     }, 800);
   } else {
     hideOverlay();
@@ -339,8 +343,14 @@ mjpegStreamCam2.addEventListener("error", () => {
 // ── Plugin Controls ─────────────────────────────────────────────────────────
 
 function updatePluginSelect(plugins, activeName) {
+  // Rebuild the processor name set so isProcessorPlugin() stays accurate.
+  processorNames.clear();
+  plugins.forEach(p => { if (p.is_processor) processorNames.add(p.name); });
+
+  const previousSelection = pluginSelect.value;
   const hash = plugins.map(p => p.name).join(",");
   const listChanged = hash !== lastPluginListHash;
+  const hasPlugin = (name) => !!name && plugins.some(p => p.name === name);
 
   if (listChanged) {
     lastPluginListHash = hash;
@@ -352,14 +362,29 @@ function updatePluginSelect(plugins, activeName) {
       opt.textContent = p.label || p.name;
       pluginSelect.appendChild(opt);
     });
-    // Sync to server state only on initial load or plugin list change
-    pluginSelect.value = activeName || "";
+
+    // Keep user selection when possible; otherwise fall back to server active plugin.
+    const preferredSelection =
+      (hasPlugin(pendingPluginSelection) && pendingPluginSelection) ||
+      (hasPlugin(previousSelection) && previousSelection) ||
+      (activeName || "");
+    pluginSelect.value = preferredSelection;
     lastActivePlugin = activeName || "";
   } else if (activeName !== lastActivePlugin) {
     // Server confirmed a different plugin became active — sync the dropdown
     lastActivePlugin = activeName || "";
-    pluginSelect.value = activeName || "";
+
+    // Do not override a user selection that is pending apply.
+    if (!pendingPluginSelection || pendingPluginSelection === lastActivePlugin) {
+      pluginSelect.value = lastActivePlugin;
+      pendingPluginSelection = null;
+    }
   }
+
+  if (pendingPluginSelection && pendingPluginSelection === lastActivePlugin) {
+    pendingPluginSelection = null;
+  }
+
   // Otherwise: user may have changed the dropdown; don't overwrite their selection
 }
 
@@ -392,38 +417,68 @@ function renderPluginConfig(plugins, activeName, currentConfig) {
   });
 }
 
+// Track which plugins are processors (instant switch) vs sources (stream restart).
+// Populated when the server sends available_plugins with is_processor field.
+const processorNames = new Set();
+
+function isProcessorPlugin(name) {
+  return processorNames.has(name);
+}
+
+function setApplyLoading(loading, label = "Applying…") {
+  btnApplyPlugin.disabled = loading;
+  btnApplyPlugin.textContent = loading ? label : "Apply Plugin";
+}
+
+function finishApply() {
+  clearTimeout(pluginApplyTimer);
+  applyingPlugin = false;
+  setApplyLoading(false);
+}
+
 btnApplyPlugin.addEventListener("click", () => {
   const pluginName = pluginSelect.value;
+  pendingPluginSelection = pluginName;
   const config = {};
   pluginConfigContainer.querySelectorAll("input").forEach(input => {
     const val = input.value.trim();
     if (val === "") return;
     config[input.name] = input.type === "number" ? parseInt(val, 10) : val;
   });
-  
+
   clearTimeout(pluginApplyTimer);
   applyingPlugin = true;
-  showOverlay("App configuration in progress…", true);
-  
-  // Timeout fallback: if stream doesn't load within 5s, show completion anyway
-  pluginApplyTimer = setTimeout(() => {
-    if (applyingPlugin) {
-      videoOverlayText.textContent = "The configuration has been applied ✓";
-      overlaySpinner.classList.remove("active");
-      pluginApplyTimer = setTimeout(() => {
-        videoOverlay.classList.add("hidden");
-        applyingPlugin = false;
-      }, 1000);
-    }
-  }, 5000);
-  
-  forceStreamReload = true;
-  send({ type: "switch_plugin", plugin_name: pluginName, config: config });
   pluginConfigContainer.dataset.plugin = "";
+
+  if (isProcessorPlugin(pluginName)) {
+    // ── Processor: instant switch, no stream restart ──────────────────────
+    setApplyLoading(true, "Applying…");
+    send({ type: "switch_plugin", plugin_name: pluginName, config: config });
+    // Re-enable button once server confirms (or after short timeout)
+    pluginApplyTimer = setTimeout(finishApply, 1000);
+  } else {
+    // ── Source: stream will restart, show overlay while waiting ──────────
+    setApplyLoading(true, "Restarting…");
+    showOverlay("Switching camera source…", true);
+    forceStreamReload = true;
+    send({ type: "switch_plugin", plugin_name: pluginName, config: config });
+    // Fallback: give up waiting after 8s
+    pluginApplyTimer = setTimeout(() => {
+      if (applyingPlugin) {
+        finishApply();
+        videoOverlayText.textContent = "Plugin applied ✓";
+        overlaySpinner.classList.remove("active");
+        pluginApplyTimer = setTimeout(() => {
+          videoOverlay.classList.add("hidden");
+        }, 1000);
+      }
+    }, 8000);
+  }
 });
 
 pluginSelect.addEventListener("change", () => {
   const selectedName = pluginSelect.value;
+  pendingPluginSelection = selectedName;
   if (lastPluginList.length > 0) {
     pluginConfigContainer.dataset.plugin = "";  // force re-render
     renderPluginConfig(lastPluginList, selectedName, {});
