@@ -26,6 +26,14 @@ Port convention (same as 01_IMU):
 
 # ── IMPORTS ────────────────────────────────────────────────────────────────────
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
 import argparse
 import asyncio
 import copy
@@ -634,26 +642,26 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RTK serial-to-WebSocket bridge")
     parser.add_argument(
         "--port",
-        default="/dev/cu.usbmodem11203",
-        help="Serial port for RTK receiver (default: /dev/ttyACM1)",
+        default=_cfg.RTK_SERIAL_PORT if _cfg else "/dev/cu.usbmodem11203",
+        help="Serial port for RTK receiver",
     )
     parser.add_argument(
         "--baud",
         type=int,
-        default=9600,
-        help="Serial baud rate (default: 9600)",
+        default=_cfg.RTK_BAUD if _cfg else 9600,
+        help="Serial baud rate",
     )
     parser.add_argument(
         "--ws-port",
         type=int,
-        default=8775,
-        help="HTTP port for web UI; WebSocket uses ws-port+1 (default: 8775)",
+        default=_cfg.RTK_WS_PORT if _cfg else 8775,
+        help="HTTP port for web UI; WebSocket uses ws-port+1",
     )
     parser.add_argument(
         "--hz",
         type=float,
-        default=5.0,
-        help="Broadcast rate in Hz (default: 5)",
+        default=_cfg.RTK_HZ if _cfg else 5.0,
+        help="Broadcast rate in Hz",
     )
     parser.add_argument(
         "--open-browser",

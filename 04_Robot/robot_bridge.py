@@ -26,6 +26,14 @@ Usage:
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
 import argparse
 import asyncio
 import json
@@ -485,40 +493,40 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Robot Bridge — serial + nav proxy")
     parser.add_argument(
         "--ws-port", type=int,
-        default=int(os.environ.get("WEB_HTTP_PORT", "8888")),
-        help="HTTP port; WebSocket = ws-port+1 (default: 8888)",
+        default=int(os.environ.get("WEB_HTTP_PORT", str(_cfg.ROBOT_WS_PORT if _cfg else 8888))),
+        help="HTTP port; WebSocket = ws-port+1",
     )
     parser.add_argument(
         "--serial-port",
-        default=os.environ.get("FEATHER_PORT", _default_serial_port()),
+        default=os.environ.get("FEATHER_PORT", _cfg.ROBOT_SERIAL_PORT if _cfg else _default_serial_port()),
         help="Feather M4 serial port",
     )
     parser.add_argument(
         "--serial-baud", type=int,
-        default=int(os.environ.get("SERIAL_BAUD", "115200")),
+        default=int(os.environ.get("SERIAL_BAUD", str(_cfg.ROBOT_SERIAL_BAUD if _cfg else 115200))),
     )
     parser.add_argument(
         "--serial-timeout", type=float,
-        default=float(os.environ.get("SERIAL_TIMEOUT", "1.0")),
+        default=float(os.environ.get("SERIAL_TIMEOUT", str(_cfg.ROBOT_SERIAL_TIMEOUT if _cfg else 1.0))),
     )
     parser.add_argument(
         "--max-linear", type=float,
-        default=float(os.environ.get("MAX_LINEAR_VEL", "1.0")),
+        default=float(os.environ.get("MAX_LINEAR_VEL", str(_cfg.ROBOT_MAX_LINEAR if _cfg else 1.0))),
         help="Max linear velocity m/s",
     )
     parser.add_argument(
         "--max-angular", type=float,
-        default=float(os.environ.get("MAX_ANGULAR_VEL", "1.0")),
+        default=float(os.environ.get("MAX_ANGULAR_VEL", str(_cfg.ROBOT_MAX_ANGULAR if _cfg else 1.0))),
         help="Max angular velocity rad/s",
     )
     parser.add_argument(
         "--watchdog-timeout", type=float,
-        default=float(os.environ.get("WATCHDOG_TIMEOUT", "2.0")),
+        default=float(os.environ.get("WATCHDOG_TIMEOUT", str(_cfg.ROBOT_WATCHDOG_TIMEOUT if _cfg else 2.0))),
     )
     parser.add_argument(
         "--nav-ws-url",
-        default=os.environ.get("NAV_WS_URL", "ws://localhost:8786"),
-        help="nav_bridge WebSocket URL (default: ws://localhost:8786)",
+        default=os.environ.get("NAV_WS_URL", _cfg.ROBOT_NAV_WS if _cfg else "ws://localhost:8786"),
+        help="nav_bridge WebSocket URL",
     )
     return parser.parse_args()
 

@@ -21,29 +21,6 @@ from . import FrameProcessor, register_processor
 
 logger = logging.getLogger(__name__)
 
-
-def _colorize_depth(frame_depth: np.ndarray) -> np.ndarray:
-    if cv2 is None:
-        return np.zeros((*frame_depth.shape[:2], 3), dtype=np.uint8)
-    invalid_mask = frame_depth == 0
-    try:
-        valid = frame_depth[frame_depth != 0]
-        if valid.size == 0:
-            return np.zeros((*frame_depth.shape[:2], 3), dtype=np.uint8)
-        min_depth = np.percentile(valid, 3)
-        max_depth = np.percentile(valid, 95)
-        log_depth = np.log(frame_depth, where=frame_depth != 0, out=np.zeros_like(frame_depth, dtype=float))
-        log_min = np.log(max(min_depth, 1))
-        log_max = np.log(max(max_depth, 1))
-        log_depth = np.clip(log_depth, log_min, log_max)
-        color = np.interp(log_depth, (log_min, log_max), (0, 255)).astype(np.uint8)
-        color = cv2.applyColorMap(color, cv2.COLORMAP_JET)
-        color[invalid_mask] = 0
-        return color
-    except Exception:
-        return np.zeros((*frame_depth.shape[:2], 3), dtype=np.uint8)
-
-
 @register_processor
 class DepthCamProcessor(FrameProcessor):
     """

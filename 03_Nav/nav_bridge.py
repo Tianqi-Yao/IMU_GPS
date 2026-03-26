@@ -16,6 +16,14 @@ Usage:
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
 import argparse
 import asyncio
 import json
@@ -590,24 +598,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--nav-port",
         type=int,
-        default=8785,
-        help="HTTP port for web UI; WebSocket uses nav-port+1 (default: 8785)",
+        default=_cfg.NAV_WS_PORT if _cfg else 8785,
+        help="HTTP port for web UI; WebSocket uses nav-port+1",
     )
     parser.add_argument(
         "--imu-ws",
-        default="ws://localhost:8766",
-        help="WebSocket URL for imu_bridge (default: ws://localhost:8766)",
+        default=_cfg.NAV_IMU_WS if _cfg else "ws://localhost:8766",
+        help="WebSocket URL for imu_bridge",
     )
     parser.add_argument(
         "--rtk-ws",
-        default="ws://localhost:8776",
-        help="WebSocket URL for rtk_bridge (default: ws://localhost:8776)",
+        default=_cfg.NAV_RTK_WS if _cfg else "ws://localhost:8776",
+        help="WebSocket URL for rtk_bridge",
     )
     parser.add_argument(
         "--hz",
         type=float,
-        default=10.0,
-        help="Broadcast rate in Hz (default: 10)",
+        default=_cfg.NAV_HZ if _cfg else 10.0,
+        help="Broadcast rate in Hz",
     )
     return parser.parse_args()
 

@@ -23,6 +23,14 @@ Usage:
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
 import argparse
 import asyncio
 import csv
@@ -1459,31 +1467,46 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Autonomous navigation engine: GPS+IMU filtered PID/PurePursuit control"
     )
-    parser.add_argument("--ws-port", type=int, default=8805,
-                        help="HTTP port; WS uses ws-port+1 (default: 8805)")
-    parser.add_argument("--imu-ws", default="ws://localhost:8766",
-                        help="IMU bridge WS URL (default: ws://localhost:8766)")
-    parser.add_argument("--rtk-ws", default="ws://localhost:8776",
-                        help="RTK bridge WS URL (default: ws://localhost:8776)")
-    parser.add_argument("--robot-ws", default="ws://localhost:8796",
-                        help="Robot bridge WS URL (default: ws://localhost:8796)")
-    parser.add_argument("--max-linear-vel", type=float, default=1.0,
-                        help="Max linear velocity m/s (default: 1.0)")
-    parser.add_argument("--max-angular-vel", type=float, default=1.0,
-                        help="Max angular velocity rad/s (default: 1.0)")
-    parser.add_argument("--pid-kp", type=float, default=0.8, help="PID Kp (default: 0.8)")
-    parser.add_argument("--pid-ki", type=float, default=0.01, help="PID Ki (default: 0.01)")
-    parser.add_argument("--pid-kd", type=float, default=0.05, help="PID Kd (default: 0.05)")
-    parser.add_argument("--lookahead-m", type=float, default=2.0,
-                        help="Pure pursuit lookahead distance m (default: 2.0)")
-    parser.add_argument("--decel-radius-m", type=float, default=3.0,
-                        help="P2P deceleration radius m (default: 3.0)")
-    parser.add_argument("--arrive-frames", type=int, default=5,
-                        help="Consecutive frames for arrival (default: 5)")
-    parser.add_argument("--gps-timeout-s", type=float, default=5.0,
-                        help="GPS timeout seconds (default: 5.0)")
-    parser.add_argument("--ma-window", type=int, default=10,
-                        help="Moving average filter window (default: 10)")
+    _c = _cfg
+    parser.add_argument("--ws-port", type=int,
+                        default=_c.AUTONAV_WS_PORT if _c else 8805,
+                        help="HTTP port; WS uses ws-port+1")
+    parser.add_argument("--imu-ws",
+                        default=_c.AUTONAV_IMU_WS if _c else "ws://localhost:8766",
+                        help="IMU bridge WS URL")
+    parser.add_argument("--rtk-ws",
+                        default=_c.AUTONAV_RTK_WS if _c else "ws://localhost:8776",
+                        help="RTK bridge WS URL")
+    parser.add_argument("--robot-ws",
+                        default=_c.AUTONAV_ROBOT_WS if _c else "ws://localhost:8796",
+                        help="Robot bridge WS URL")
+    parser.add_argument("--max-linear-vel", type=float,
+                        default=_c.AUTONAV_MAX_LINEAR_VEL if _c else 1.0,
+                        help="Max linear velocity m/s")
+    parser.add_argument("--max-angular-vel", type=float,
+                        default=_c.AUTONAV_MAX_ANGULAR_VEL if _c else 1.0,
+                        help="Max angular velocity rad/s")
+    parser.add_argument("--pid-kp", type=float,
+                        default=_c.AUTONAV_PID_KP if _c else 0.8, help="PID Kp")
+    parser.add_argument("--pid-ki", type=float,
+                        default=_c.AUTONAV_PID_KI if _c else 0.01, help="PID Ki")
+    parser.add_argument("--pid-kd", type=float,
+                        default=_c.AUTONAV_PID_KD if _c else 0.05, help="PID Kd")
+    parser.add_argument("--lookahead-m", type=float,
+                        default=_c.AUTONAV_LOOKAHEAD_M if _c else 2.0,
+                        help="Pure pursuit lookahead distance m")
+    parser.add_argument("--decel-radius-m", type=float,
+                        default=_c.AUTONAV_DECEL_RADIUS_M if _c else 3.0,
+                        help="P2P deceleration radius m")
+    parser.add_argument("--arrive-frames", type=int,
+                        default=_c.AUTONAV_ARRIVE_FRAMES if _c else 5,
+                        help="Consecutive frames for arrival")
+    parser.add_argument("--gps-timeout-s", type=float,
+                        default=_c.AUTONAV_GPS_TIMEOUT_S if _c else 5.0,
+                        help="GPS timeout seconds")
+    parser.add_argument("--ma-window", type=int,
+                        default=_c.AUTONAV_MA_WINDOW if _c else 10,
+                        help="Moving average filter window")
     return parser.parse_args()
 
 

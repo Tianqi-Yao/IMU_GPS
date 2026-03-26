@@ -32,4 +32,5 @@ class SimpleColorProcessor(FrameProcessor):
         return []
 
     def process(self, frames: dict[str, np.ndarray | None]) -> np.ndarray | None:
-        return frames.get("rgb")
+        rgb   = frames.get("rgb")
+        return rgb

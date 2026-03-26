@@ -39,10 +39,6 @@ const pluginSelect       = document.getElementById("pluginSelect");
 const activePlugin       = document.getElementById("activePlugin");
 const pluginConfigContainer = document.getElementById("pluginConfigContainer");
 const btnApplyPlugin     = document.getElementById("btnApplyPlugin");
-const btnRestartCamera   = document.getElementById("btnRestartCamera");
-const settingsFps        = document.getElementById("settingsFps");
-const settingsWidth      = document.getElementById("settingsWidth");
-const settingsHeight     = document.getElementById("settingsHeight");
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
@@ -505,33 +501,6 @@ pluginSelect.addEventListener("change", () => {
     renderPluginConfig(lastPluginList, selectedName, {});
   }
 });
-
-// ── Advanced Settings ─────────────────────────────────────────────────────────
-
-if (btnRestartCamera) {
-  btnRestartCamera.addEventListener("click", () => {
-    const fps    = parseInt(settingsFps.value, 10) || 30;
-    const width  = parseInt(settingsWidth.value, 10) || 1280;
-    const height = parseInt(settingsHeight.value, 10) || 720;
-
-    if (!confirm(`Restart camera with ${width}x${height} @ ${fps}fps?\nThe stream will be interrupted briefly.`)) {
-      return;
-    }
-
-    applyingPlugin = true;
-    showOverlay("Restarting camera…", true);
-    btnRestartCamera.disabled = true;
-    btnRestartCamera.textContent = "Restarting…";
-
-    send({ type: "restart_camera", fps, width, height });
-
-    // Re-enable button after timeout (server broadcasts new status when done)
-    setTimeout(() => {
-      btnRestartCamera.disabled = false;
-      btnRestartCamera.textContent = "Restart Camera";
-    }, 8000);
-  });
-}
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 applyViewMode();

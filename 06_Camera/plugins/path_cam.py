@@ -34,10 +34,6 @@ _ROI_Y_MIN = 0.55  # top edge; extends to bottom of frame
 # ── Minimum contour area to consider (px²) ───────────────────────────────────
 _MIN_CONTOUR_AREA = 40
 
-# ── Composite panel size per panel ───────────────────────────────────────────
-_PANEL_W = 640
-_PANEL_H = 360
-
 
 @register_processor
 class PathCamProcessor(FrameProcessor):
@@ -141,9 +137,9 @@ class PathCamProcessor(FrameProcessor):
         # OUTPUT ──────────────────────────────────────────────────────────────
         if self._display_mode == "composite":
             panels = [
-                cv2.resize(img,        (_PANEL_W, _PANEL_H)),
-                cv2.resize(yellow_only,(_PANEL_W, _PANEL_H)),
-                cv2.resize(target_view,(_PANEL_W, _PANEL_H)),
+                img,
+                yellow_only,
+                target_view
             ]
             return np.concatenate(panels, axis=1)
         return target_view

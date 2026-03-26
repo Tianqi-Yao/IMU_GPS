@@ -13,6 +13,14 @@ Usage:
 
 from __future__ import annotations
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
 import argparse
 import asyncio
 import json
@@ -664,26 +672,26 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--port",
-        default="/dev/cu.usbmodem101",  # --- EDIT THIS DEFAULT FOR YOUR SYSTEM ---
-        help="Serial port device (default: /dev/ttyACM0)",
+        default=_cfg.IMU_SERIAL_PORT if _cfg else "/dev/cu.usbmodem101",
+        help="Serial port device",
     )
     parser.add_argument(
         "--baud",
         type=int,
-        default=921600,
-        help="Serial baud rate (default: 921600)",
+        default=_cfg.IMU_BAUD if _cfg else 921600,
+        help="Serial baud rate",
     )
     parser.add_argument(
         "--ws-port",
         type=int,
-        default=8765,
-        help="HTTP port for web UI; WebSocket uses ws-port+1 (default: 8765)",
+        default=_cfg.IMU_WS_PORT if _cfg else 8765,
+        help="HTTP port for web UI; WebSocket uses ws-port+1",
     )
     parser.add_argument(
         "--north-offset",
         type=float,
-        default=0.0,
-        help="Initial north offset in degrees applied to yaw (default: 0.0)",
+        default=_cfg.IMU_NORTH_OFFSET if _cfg else 0.0,
+        help="Initial north offset in degrees applied to yaw",
     )
     return parser.parse_args()
 

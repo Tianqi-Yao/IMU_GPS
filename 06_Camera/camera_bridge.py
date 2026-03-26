@@ -58,6 +58,14 @@ except ModuleNotFoundError:
 get_processor = _plugins_mod.get_processor
 list_plugins  = _plugins_mod.list_plugins
 
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
 try:
     import depthai as dai
 except ImportError:
@@ -807,7 +815,6 @@ class CameraBridge:
         self._cam_selection = cam_selection
         self._static_dir = static_dir
         # Store original argv for process-restart (Advanced Settings)
-        self._original_argv = sys.argv[:]
 
         cam_configs: dict[int, dict] = {}
         if cam1_ip:
@@ -900,54 +907,8 @@ class CameraBridge:
             config = msg.get("config", {})
             self._pipeline.update_plugin_config(config)
 
-        elif msg_type == "restart_camera":
-            fps    = int(msg.get("fps", 30))
-            width  = int(msg.get("width", 1280))
-            height = int(msg.get("height", 720))
-            # depthai does not support closing/reopening a device in the same
-            # process.  Re-exec the whole process with updated fps/width/height.
-            threading.Thread(
-                target=self._restart_process,
-                args=(fps, width, height),
-                daemon=True,
-                name="camera-restart",
-            ).start()
-
         else:
             logger.debug("CameraBridge: unknown message type: %s", msg_type)
-
-    def _restart_process(self, fps: int, width: int, height: int) -> None:
-        """
-        Re-exec the current Python process with updated fps/width/height args.
-
-        depthai does not support closing and reopening a device within the
-        same process, so the only reliable way to change resolution or FPS
-        is to restart the entire process via os.execv.
-        """
-        logger.info(
-            "CameraBridge: restarting process — %dx%d @ %d fps", width, height, fps
-        )
-        # Build new argv: start from original, patch --fps/--width/--height
-        argv = self._original_argv[:]
-
-        def _replace_or_append(args: list[str], flag: str, value: str) -> None:
-            for i, arg in enumerate(args):
-                if arg == flag and i + 1 < len(args):
-                    args[i + 1] = value
-                    return
-                if arg.startswith(f"{flag}="):
-                    args[i] = f"{flag}={value}"
-                    return
-            args.extend([flag, value])
-
-        _replace_or_append(argv, "--fps",    str(fps))
-        _replace_or_append(argv, "--width",  str(width))
-        _replace_or_append(argv, "--height", str(height))
-
-        self._pipeline.shutdown()
-        time.sleep(0.5)  # let depthai release resources before exec
-        # argv[0] is the script path; keep it so Python knows what to run
-        os.execv(sys.executable, [sys.executable] + argv)
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
@@ -956,43 +917,48 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="OAK-D camera MJPEG streaming bridge with WebSocket control"
     )
+    _c = _cfg
     parser.add_argument(
-        "--ws-port", type=int, default=8815,
-        help="HTTP port for web UI; WebSocket uses ws-port+1 (default: 8815)",
+        "--ws-port", type=int, default=_c.CAM_WS_PORT if _c else 8815,
+        help="HTTP port for web UI; WebSocket uses ws-port+1",
     )
     parser.add_argument(
-        "--cam1-ip", default="10.95.76.11",
+        "--cam1-ip", default=_c.CAM1_IP if _c else "10.95.76.11",
         help="OAK-D camera 1 IP address",
     )
     parser.add_argument(
-        "--cam2-ip", default="10.95.76.10",
-        help="OAK-D camera 2 IP address (default: 10.95.76.10)",
+        "--cam2-ip", default=_c.CAM2_IP if _c else "10.95.76.10",
+        help="OAK-D camera 2 IP address",
     )
     parser.add_argument(
         "--cam-selection", type=int, default=1, choices=[1, 2],
         help="Initial camera selection (default: 1)",
     )
     parser.add_argument(
-        "--cam1-stream-port", type=int, default=8080,
-        help="MJPEG stream port for camera 1 (default: 8080)",
+        "--cam1-stream-port", type=int, default=_c.CAM1_STREAM_PORT if _c else 8080,
+        help="MJPEG stream port for camera 1",
     )
     parser.add_argument(
-        "--cam2-stream-port", type=int, default=8081,
-        help="MJPEG stream port for camera 2 (default: 8081)",
+        "--cam2-stream-port", type=int, default=_c.CAM2_STREAM_PORT if _c else 8081,
+        help="MJPEG stream port for camera 2",
     )
-    parser.add_argument("--fps", type=int, default=25, help="Camera FPS (default: 25)")
-    parser.add_argument("--width", type=int, default=640, help="Frame width (default: 640)")
-    parser.add_argument("--height", type=int, default=480, help="Frame height (default: 480)")
+    parser.add_argument("--fps", type=int, default=_c.CAM_FPS if _c else 25,
+                        help="Camera FPS")
+    parser.add_argument("--width", type=int, default=_c.CAM_WIDTH if _c else 640,
+                        help="Frame width (pixels)")
+    parser.add_argument("--height", type=int, default=_c.CAM_HEIGHT if _c else 480,
+                        help="Frame height (pixels)")
     parser.add_argument(
-        "--mjpeg-quality", type=int, default=80,
-        help="JPEG encoding quality 1-100 (default: 80)",
+        "--mjpeg-quality", type=int, default=_c.CAM_MJPEG_QUALITY if _c else 80,
+        help="JPEG encoding quality 1-100",
     )
     parser.add_argument(
-        "--plugin", default="simple_color",
-        help="Initial plugin name (default: simple_color)",
+        "--plugin", default=_c.CAM_DEFAULT_PLUGIN if _c else "simple_color",
+        help="Initial plugin name",
     )
     parser.add_argument(
-        "--stereo", default=True,
+        "--stereo", action=argparse.BooleanOptionalAction,
+        default=_c.CAM_ENABLE_STEREO if _c else False,
         help="Enable stereo depth nodes (Left/Right/StereoDepth)",
     )
     return parser.parse_args()
