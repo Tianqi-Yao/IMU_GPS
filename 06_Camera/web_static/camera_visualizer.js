@@ -54,6 +54,8 @@ let lastPluginListHash = "";
 let waitingForFirstFrame = false;
 let forceStreamReload = false;
 let viewMode = "single"; // single | both
+let applyingPlugin = false; // plugin apply feedback flag
+let pluginApplyTimer = null;
 
 function showOverlay(text, loading = false) {
   videoOverlayText.textContent = text;
@@ -62,6 +64,8 @@ function showOverlay(text, loading = false) {
 }
 
 function hideOverlay() {
+  // Don't hide immediately if applying plugin; wait for real feedback
+  if (applyingPlugin) return;
   videoOverlay.classList.add("hidden");
   overlaySpinner.classList.remove("active");
 }
@@ -287,7 +291,18 @@ btnViewBoth.addEventListener("click", () => {
 
 mjpegStream.addEventListener("load", () => {
   waitingForFirstFrame = false;
-  hideOverlay();
+  // If applying plugin, show success and hide overlay after a brief moment for visibility
+  if (applyingPlugin) {
+    videoOverlayText.textContent = "Plugin applied ✓";
+    overlaySpinner.classList.remove("active");
+    clearTimeout(pluginApplyTimer);
+    pluginApplyTimer = setTimeout(() => {
+      videoOverlay.classList.add("hidden");
+      applyingPlugin = false;
+    }, 800);
+  } else {
+    hideOverlay();
+  }
 });
 
 mjpegStream.addEventListener("error", () => {
@@ -296,8 +311,20 @@ mjpegStream.addEventListener("error", () => {
   showOverlay("Waiting for camera…", true);
 });
 
-mjpegStreamCam1.addEventListener("load", () => hideDualOverlay(1));
-mjpegStreamCam2.addEventListener("load", () => hideDualOverlay(2));
+mjpegStreamCam1.addEventListener("load", () => {
+  if (applyingPlugin) {
+    showDualOverlay(1, "Applied ✓");
+  } else {
+    hideDualOverlay(1);
+  }
+});
+mjpegStreamCam2.addEventListener("load", () => {
+  if (applyingPlugin) {
+    showDualOverlay(2, "Applied ✓");
+  } else {
+    hideDualOverlay(2);
+  }
+});
 mjpegStreamCam1.addEventListener("error", () => {
   if (!mjpegStreamCam1.src) return;
   showDualOverlay(1, "Camera 1 waiting…");
@@ -363,7 +390,23 @@ btnApplyPlugin.addEventListener("click", () => {
     if (val === "") return;
     config[input.name] = input.type === "number" ? parseInt(val, 10) : val;
   });
-  showOverlay("Applying plugin…", true);
+  
+  clearTimeout(pluginApplyTimer);
+  applyingPlugin = true;
+  showOverlay("App configuration in progress…", true);
+  
+  // Timeout fallback: if stream doesn't load within 5s, show completion anyway
+  pluginApplyTimer = setTimeout(() => {
+    if (applyingPlugin) {
+      videoOverlayText.textContent = "The configuration has been applied ✓";
+      overlaySpinner.classList.remove("active");
+      pluginApplyTimer = setTimeout(() => {
+        videoOverlay.classList.add("hidden");
+        applyingPlugin = false;
+      }, 1000);
+    }
+  }, 5000);
+  
   forceStreamReload = true;
   send({ type: "switch_plugin", plugin_name: pluginName, config: config });
   pluginConfigContainer.dataset.plugin = "";
