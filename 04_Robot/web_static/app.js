@@ -160,8 +160,11 @@ const FIX_LABELS = {
 function handleRTK(msg) {
   const dot   = document.getElementById('rtk-live-dot');
   const badge = document.getElementById('rtk-fix-badge');
+  const available = (msg.available != null)
+    ? !!msg.available
+    : ((msg.source === 'rtk') || ((msg.fix_quality || 0) > 0));
 
-  if (!msg.available) {
+  if (!available) {
     dot.className = ''; dot.title = 'RTK OFFLINE';
     badge.textContent = 'OFFLINE'; badge.className = '';
     return;

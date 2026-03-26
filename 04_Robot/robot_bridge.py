@@ -144,7 +144,12 @@ class NavBridgeClient:
                         if "imu" in msg:
                             await self._broadcast_fn({"type": "imu", **msg["imu"]})
                         if "rtk" in msg:
-                            await self._broadcast_fn({"type": "rtk", **msg["rtk"]})
+                            rtk = msg["rtk"]
+                            available = bool(
+                                rtk.get("source") == "rtk"
+                                or (rtk.get("fix_quality") or 0) > 0
+                            )
+                            await self._broadcast_fn({"type": "rtk", "available": available, **rtk})
                         if "nav" in msg:
                             nav = msg["nav"]
                             await self._broadcast_fn({
