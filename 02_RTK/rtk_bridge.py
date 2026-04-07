@@ -2,9 +2,9 @@
 rtk_bridge.py — RTK serial reader to WebSocket bridge + static web map UI.
 
 Data flow:
-    Serial Port → SerialReader → NMEAPipeline (accumulates GGA + RMC state)
-                                        ↓  snapshot() at N Hz
-                                 BroadcastLoop → WebSocketServer → Browser
+    Serial Port A/B → SerialReader(s) → NMEAPipeline(s) (accumulate GGA + RMC state)
+                                               ↓  snapshot() on active source at N Hz
+                                        BroadcastLoop → WebSocketServer → Browser
 
 NMEAPipeline stages:
     raw NMEA line
@@ -14,14 +14,18 @@ NMEAPipeline stages:
       → _parse_rmc()         → updates internal RTKFrame (speed/track)
 
 Runs:
-  - SerialReader daemon thread  (NMEA parser, auto-reconnect on failure)
+    - SerialReader daemon thread(s) (NMEA parser, auto-reconnect on failure)
   - HttpFileServer daemon thread (serves web_static/)
   - BroadcastLoop asyncio coroutine (polls pipeline, pushes to WS clients)
   - WebSocketServer asyncio server
 
 Port convention (same as 01_IMU):
-  HTTP  = --ws-port        (default 8775)
-  WebSocket = --ws-port+1  (default 8776)
+    HTTP  = --ws-port        (default 8775)
+    WebSocket = --ws-port+1  (default 8776)
+
+Multi-RTK mode:
+    - pass one or two --port values
+    - the browser can switch the active source when two receivers are present
 """
 
 # ── IMPORTS ────────────────────────────────────────────────────────────────────
@@ -136,6 +140,124 @@ class RTKFrame:
             "server_ts":   server_ts,
             "source":      "default" if use_default else "rtk",
         }
+
+
+@dataclass
+class RTKSourceInfo:
+    """Runtime status for one configured RTK serial source."""
+
+    source_id: str
+    port: str
+    label: str
+    connected: bool = False
+    last_seen_ts: Optional[float] = None
+    last_error: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "source_id": self.source_id,
+            "port": self.port,
+            "label": self.label,
+            "connected": self.connected,
+            "last_seen_ts": self.last_seen_ts,
+            "last_error": self.last_error,
+        }
+
+
+class RTKSourceManager:
+    """Manage multiple RTK pipelines and expose one active source at a time."""
+
+    def __init__(self, sources: list[tuple[str, str]], default_lat: float, default_lon: float) -> None:
+        if not sources:
+            raise ValueError("RTKSourceManager requires at least one source")
+
+        self._pipelines = {source_id: NMEAPipeline() for source_id, _ in sources}
+        self._sources = {
+            source_id: RTKSourceInfo(
+                source_id=source_id,
+                port=port,
+                label=f"RTK {index + 1} ({port})",
+            )
+            for index, (source_id, port) in enumerate(sources)
+        }
+        self._active_source = sources[0][0]
+        self._default_lat = default_lat
+        self._default_lon = default_lon
+        self._lock = threading.Lock()
+
+    def source_options(self) -> list[dict]:
+        with self._lock:
+            return [info.to_dict() for info in self._sources.values()]
+
+    def active_source(self) -> str:
+        with self._lock:
+            return self._active_source
+
+    def active_source_label(self) -> str:
+        with self._lock:
+            info = self._sources.get(self._active_source)
+            return info.label if info else self._active_source
+
+    def set_active_source(self, source_id: str) -> None:
+        with self._lock:
+            if source_id not in self._sources:
+                raise KeyError(source_id)
+            if source_id != self._active_source:
+                logger.info("RTKSourceManager: active source changed to %s", source_id)
+            self._active_source = source_id
+
+    def mark_connected(self, source_id: str, connected: bool) -> None:
+        with self._lock:
+            info = self._sources.get(source_id)
+            if info is None:
+                return
+            info.connected = connected
+            if connected:
+                info.last_error = None
+
+    def mark_seen(self, source_id: str) -> None:
+        with self._lock:
+            info = self._sources.get(source_id)
+            if info is not None:
+                info.last_seen_ts = time.time()
+
+    def mark_error(self, source_id: str, error_text: str) -> None:
+        with self._lock:
+            info = self._sources.get(source_id)
+            if info is not None:
+                info.last_error = error_text
+                info.connected = False
+
+    def process_line(self, source_id: str, raw_line: str) -> None:
+        pipeline = self._pipelines.get(source_id)
+        if pipeline is None:
+            logger.warning("RTKSourceManager: unknown source %s, dropping line", source_id)
+            return
+
+        self.mark_seen(source_id)
+        pipeline.process(raw_line)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            active_source = self._active_source
+            active_info = self._sources[active_source]
+            sources = [info.to_dict() for info in self._sources.values()]
+
+        frame = self._pipelines[active_source].snapshot()
+        payload = frame.to_dict(
+            server_ts=time.time(),
+            default_lat=self._default_lat,
+            default_lon=self._default_lon,
+        )
+        payload.update(
+            {
+                "rtk_source": active_source,
+                "rtk_source_label": active_info.label,
+                "rtk_sources": sources,
+                "rtk_active_source": active_source,
+            }
+        )
+        return payload
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -345,7 +467,7 @@ class NMEAPipeline:
 
 class SerialReader:
     """
-    Daemon thread: read NMEA lines from the GPS receiver and feed into NMEAPipeline.
+    Daemon thread: read NMEA lines from one GPS receiver and feed its pipeline.
 
     Auto-reconnects every 3 s on serial failure so the bridge survives
     cable disconnects or device resets.
@@ -355,18 +477,20 @@ class SerialReader:
 
     def __init__(
         self,
+        source_id: str,
         port: str,
         baud: int,
-        pipeline: NMEAPipeline,
+        manager: RTKSourceManager,
         timeout: float = 1.0,
     ) -> None:
+        self._source_id = source_id
         self._port     = port
         self._baud     = baud
-        self._pipeline = pipeline
+        self._manager  = manager
         self._timeout  = timeout
         self._thread   = threading.Thread(
             target=self._run,
-            name="rtk-serial-reader",
+            name=f"rtk-serial-reader-{source_id}",
             daemon=True,
         )
 
@@ -380,12 +504,14 @@ class SerialReader:
             try:
                 ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
             except serial.SerialException as e:
+                self._manager.mark_error(self._source_id, str(e))
                 logger.error("SerialReader: failed to open %s: %s — retrying in %.0fs",
                              self._port, e, self.RECONNECT_DELAY)
                 time.sleep(self.RECONNECT_DELAY)
                 continue
 
             logger.info("SerialReader: port opened: %s @ %d baud", self._port, self._baud)
+            self._manager.mark_connected(self._source_id, True)
             try:
                 while True:
                     try:
@@ -398,17 +524,20 @@ class SerialReader:
                             continue
                         line = raw.decode("ascii", errors="ignore").strip()
                         if line:
-                            self._pipeline.process(line)
+                            self._manager.process_line(self._source_id, line)
                     except serial.SerialException as e:
+                        self._manager.mark_error(self._source_id, str(e))
                         logger.error("SerialReader: read error: %s — reconnecting", e)
                         break
                     except Exception as e:
+                        self._manager.mark_error(self._source_id, str(e))
                         logger.error("SerialReader: unexpected error: %s", e)
             finally:
                 try:
                     ser.close()
                 except Exception as e:
                     logger.warning("SerialReader: error closing port: %s", e)
+                self._manager.mark_connected(self._source_id, False)
                 logger.info("SerialReader: port closed, reconnecting in %.0fs",
                             self.RECONNECT_DELAY)
                 time.sleep(self.RECONNECT_DELAY)
@@ -424,29 +553,18 @@ class BroadcastLoop:
 
     def __init__(
         self,
-        pipeline: NMEAPipeline,
+        manager: RTKSourceManager,
         queue: asyncio.Queue,
         hz: float,
-        default_lat: float,
-        default_lon: float,
     ) -> None:
-        self._pipeline    = pipeline
+        self._manager     = manager
         self._queue       = queue
         self._period      = 1.0 / max(hz, 0.5)
-        self._default_lat = default_lat
-        self._default_lon = default_lon
 
     async def run(self) -> None:
         """Coroutine entry: sample pipeline and enqueue JSON messages."""
         while True:
-            frame = self._pipeline.snapshot()
-            msg   = json.dumps(
-                frame.to_dict(
-                    server_ts=time.time(),
-                    default_lat=self._default_lat,
-                    default_lon=self._default_lon,
-                )
-            )
+            msg = json.dumps(self._manager.snapshot())
             # Non-blocking put; drop frame if queue is full to avoid backlog
             try:
                 self._queue.put_nowait(msg)   # → WebSocketServer
@@ -463,9 +581,10 @@ class WebSocketServer:
     Dead connections are silently pruned.
     """
 
-    def __init__(self, port: int, queue: asyncio.Queue) -> None:
+    def __init__(self, port: int, queue: asyncio.Queue, manager: RTKSourceManager) -> None:
         self._port    = port
         self._queue   = queue
+        self._manager = manager
         self._clients: set = set()
         self._lock    = asyncio.Lock()
 
@@ -476,11 +595,31 @@ class WebSocketServer:
         async with self._lock:
             self._clients.add(websocket)
         try:
-            await websocket.wait_closed()
+            async for message in websocket:
+                await self._handle_message(message)
         finally:
             async with self._lock:
                 self._clients.discard(websocket)
             logger.info("WebSocket client disconnected: %s", addr)
+
+    async def _handle_message(self, message: str) -> None:
+        try:
+            payload = json.loads(message)
+        except json.JSONDecodeError:
+            logger.warning("WebSocketServer: ignored non-JSON control message: %r", message)
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        if payload.get("type") == "set_active_source":
+            source_id = str(payload.get("source", "")).strip()
+            if not source_id:
+                return
+            try:
+                self._manager.set_active_source(source_id)
+            except KeyError:
+                logger.warning("WebSocketServer: unknown RTK source requested: %s", source_id)
 
     async def broadcast(self) -> None:
         """Dequeue messages and forward to all connected clients."""
@@ -543,8 +682,8 @@ class HttpFileServer:
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, directory=str(static_dir), **kwargs)
 
-            def log_message(self, fmt, *args):
-                logger.debug("HTTP %s - %s", self.address_string(), fmt % args)
+            def log_message(self, format, *args):
+                logger.debug("HTTP %s - %s", self.address_string(), format % args)
 
         socketserver.TCPServer.allow_reuse_address = True
         try:
@@ -572,7 +711,7 @@ class RTKBridge:
 
     def __init__(
         self,
-        serial_port: str,
+        serial_ports: list[str],
         baud: int,
         ws_port: int,
         hz: float,
@@ -581,7 +720,7 @@ class RTKBridge:
         default_lon: float,
         open_browser: bool,
     ) -> None:
-        self._serial_port  = serial_port
+        self._serial_ports = serial_ports
         self._baud         = baud
         self._http_port    = ws_port
         self._ws_port      = ws_port + 1
@@ -593,12 +732,19 @@ class RTKBridge:
 
     def run(self) -> None:
         """Synchronous entry point: start daemon threads then hand off to asyncio."""
-        # ── 1. NMEA pipeline (shared state, no thread of its own) ──────────────
-        pipeline = NMEAPipeline()
+        # ── 1. Source manager and per-source NMEA pipelines ───────────────────
+        sources = [
+            (f"rtk{index + 1}", port)
+            for index, port in enumerate(self._serial_ports)
+        ]
+        manager = RTKSourceManager(sources, self._default_lat, self._default_lon)
 
-        # ── 2. Serial reader daemon thread ─────────────────────────────────────
-        serial_reader = SerialReader(self._serial_port, self._baud, pipeline)
-        serial_reader.start()
+        # ── 2. Serial reader daemon thread(s) ──────────────────────────────────
+        readers = []
+        for source_id, port in sources:
+            reader = SerialReader(source_id, port, self._baud, manager)
+            reader.start()
+            readers.append(reader)
 
         # ── 3. HTTP file server daemon thread ──────────────────────────────────
         if not self._static_dir.exists():
@@ -607,8 +753,8 @@ class RTKBridge:
             HttpFileServer(self._static_dir, self._http_port).start()
 
         logger.info(
-            "RTK bridge | HTTP=:%d  WebSocket=:%d  broadcast=%.1f Hz",
-            self._http_port, self._ws_port, self._hz,
+            "RTK bridge | sources=%s | HTTP=:%d  WebSocket=:%d  broadcast=%.1f Hz",
+            ", ".join(self._serial_ports), self._http_port, self._ws_port, self._hz,
         )
         logger.info("Open browser at http://localhost:%d", self._http_port)
 
@@ -618,17 +764,15 @@ class RTKBridge:
 
         # ── 4 + 5. Asyncio: broadcast loop + WS server ─────────────────────────
         try:
-            asyncio.run(self._run_async(pipeline))
+            asyncio.run(self._run_async(manager))
         except KeyboardInterrupt:
             logger.info("RTKBridge: stopped by user.")
 
-    async def _run_async(self, pipeline: NMEAPipeline) -> None:
+    async def _run_async(self, manager: RTKSourceManager) -> None:
         """Asyncio coroutines: BroadcastLoop feeds the queue; WebSocketServer drains it."""
         queue      = asyncio.Queue(maxsize=10)
-        ws_server  = WebSocketServer(self._ws_port, queue)
-        broadcast  = BroadcastLoop(
-            pipeline, queue, self._hz, self._default_lat, self._default_lon
-        )
+        ws_server  = WebSocketServer(self._ws_port, queue, manager)
+        broadcast  = BroadcastLoop(manager, queue, self._hz)
 
         await asyncio.gather(
             broadcast.run(),
@@ -642,8 +786,9 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RTK serial-to-WebSocket bridge")
     parser.add_argument(
         "--port",
-        default=_cfg.RTK_SERIAL_PORT if _cfg else "/dev/cu.usbmodem11203",
-        help="Serial port for RTK receiver",
+        nargs="+",
+        default=_default_rtk_ports(),
+        help="Serial port(s) for RTK receiver(s); pass one or two values",
     )
     parser.add_argument(
         "--baud",
@@ -672,10 +817,18 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _default_rtk_ports() -> list[str]:
+    if _cfg is not None and hasattr(_cfg, "RTK_SERIAL_PORTS"):
+        return list(getattr(_cfg, "RTK_SERIAL_PORTS"))
+    if _cfg is not None and hasattr(_cfg, "RTK_SERIAL_PORT"):
+        return [getattr(_cfg, "RTK_SERIAL_PORT")]
+    return ["/dev/cu.usbmodem11203"]
+
+
 if __name__ == "__main__":
     args = _parse_args()
     RTKBridge(
-        serial_port=args.port,
+        serial_ports=args.port,
         baud=args.baud,
         ws_port=args.ws_port,
         hz=args.hz,

@@ -21,6 +21,7 @@ IMU_NORTH_OFFSET  = 0.0                      # North heading offset (degrees) fo
 # ══════════════════════════════════════════════════════════════════════════════
 
 RTK_SERIAL_PORT   = "/dev/cu.usbmodem11203"  # RTK receiver serial port (Linux: /dev/ttyACM1)
+RTK_SERIAL_PORTS  = [RTK_SERIAL_PORT]         # Add a second port here when using two RTK receivers
 RTK_BAUD          = 9600                     # Serial baud rate (NMEA standard)
 RTK_WS_PORT       = 8775                     # HTTP port; WebSocket = RTK_WS_PORT + 1
 RTK_HZ            = 5.0                      # Broadcast rate (Hz)

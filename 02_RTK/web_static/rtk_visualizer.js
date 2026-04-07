@@ -7,6 +7,7 @@ const I18N = {
     connected: 'Connected',
     reconnecting: 'Disconnected, reconnecting in 3s',
     csvLabel: 'CSV Route File',
+    rtkSource: 'RTK Source',
     findMe: 'Find Me',
     centerCurrent: 'Center Current',
     editRoute: 'Edit Route',
@@ -65,6 +66,7 @@ const I18N = {
     connected: '已连接',
     reconnecting: '已断开，3 秒后重连',
     csvLabel: 'CSV 路径文件',
+    rtkSource: 'RTK 来源',
     findMe: '定位我',
     centerCurrent: '回到当前位置',
     editRoute: '编辑路径',
@@ -197,6 +199,8 @@ const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const pageTitle = document.getElementById('pageTitle');
 const csvLabel = document.getElementById('csvLabel');
+const rtkSourceLabel = document.getElementById('rtkSourceLabel');
+const rtkSourceSelect = document.getElementById('rtkSourceSelect');
 const langToggle = document.getElementById('langToggle');
 const csvFile = document.getElementById('csvFile');
 const btnFindMe = document.getElementById('btnFindMe');
@@ -222,6 +226,8 @@ const labelTarget = document.getElementById('labelTarget');
 const labelDistance = document.getElementById('labelDistance');
 const cardEventTitle = document.getElementById('cardEventTitle');
 
+let liveSocket = null;
+let sourceSignature = '';
 let currentMarker = L.circleMarker(DEFAULT_POS, {
   radius: 8,
   color: '#073b4c',
@@ -247,6 +253,7 @@ function applyLanguage() {
   document.title = t('title');
   pageTitle.textContent = t('title');
   csvLabel.childNodes[0].nodeValue = `${t('csvLabel')} `;
+  rtkSourceLabel.childNodes[0].nodeValue = `${t('rtkSource')} `;
   btnFindMe.textContent = t('findMe');
   btnCenterCurrent.textContent = t('centerCurrent');
   btnEditRoute.textContent = isEditMode ? t('doneEdit') : t('editRoute');
@@ -489,10 +496,10 @@ function exportLogs() {
     return;
   }
   const header = [
-    'timestamp','lat','lon','source','fix_quality','num_sats','hdop','speed_mps','target_id','target_distance_m','status'
+    'timestamp','lat','lon','source','rtk_source','rtk_source_label','fix_quality','num_sats','hdop','speed_mps','target_id','target_distance_m','status'
   ];
   const rows = logs.map((r) => [
-    r.timestamp, r.lat, r.lon, r.source, r.fix_quality, r.num_sats,
+    r.timestamp, r.lat, r.lon, r.source, r.rtk_source, r.rtk_source_label, r.fix_quality, r.num_sats,
     r.hdop, r.speed_mps, r.target_id, r.target_distance_m, r.status
   ]);
   const csv = [header, ...rows].map((line) => line.join(',')).join('\n');
@@ -545,7 +552,11 @@ function updateByFrame(frame) {
 
   setField('latVal', lat.toFixed(8));
   setField('lonVal', lon.toFixed(8));
-  setField('srcVal', frame.source || 'unknown');
+  const sourceParts = [];
+  if (frame.rtk_source_label) sourceParts.push(frame.rtk_source_label);
+  else if (frame.rtk_source) sourceParts.push(frame.rtk_source);
+  if (frame.source) sourceParts.push(frame.source);
+  setField('srcVal', sourceParts.length ? sourceParts.join(' · ') : 'unknown');
   setField('fixVal', `${frame.fix_quality ?? '-'} `);
   setField('satVal', `${frame.num_sats ?? '-'} `);
   setField('hdopVal', frame.hdop == null ? '-' : Number(frame.hdop).toFixed(2));
@@ -619,6 +630,8 @@ function updateByFrame(frame) {
       lat: lat.toFixed(8),
       lon: lon.toFixed(8),
       source: frame.source || '',
+      rtk_source: frame.rtk_source || '',
+      rtk_source_label: frame.rtk_source_label || '',
       fix_quality: frame.fix_quality ?? '',
       num_sats: frame.num_sats ?? '',
       hdop: frame.hdop ?? '',
@@ -630,8 +643,41 @@ function updateByFrame(frame) {
   }
 }
 
+function syncSourceSelector(frame) {
+  if (!rtkSourceSelect) return;
+
+  const sources = Array.isArray(frame.rtk_sources) ? frame.rtk_sources : [];
+  const activeSource = frame.rtk_active_source || frame.rtk_source || '';
+  const signature = sources
+    .map((s) => [s.source_id, s.label, s.connected ? '1' : '0', s.last_error || ''].join(':'))
+    .join('|')
+    + `::${activeSource}`;
+
+  if (signature !== sourceSignature) {
+    sourceSignature = signature;
+    rtkSourceSelect.innerHTML = '';
+    sources.forEach((source) => {
+      const option = document.createElement('option');
+      option.value = source.source_id;
+      option.textContent = source.label + (source.connected ? '' : ' (offline)');
+      rtkSourceSelect.appendChild(option);
+    });
+  }
+
+  const hasMultipleSources = sources.length > 1;
+  rtkSourceSelect.disabled = !hasMultipleSources;
+  if (activeSource && rtkSourceSelect.value !== activeSource) {
+    rtkSourceSelect.value = activeSource;
+  }
+
+  if (!hasMultipleSources && sources.length === 1) {
+    rtkSourceSelect.value = sources[0].source_id;
+  }
+}
+
 function connectWebSocket() {
   const ws = new WebSocket(WS_URL);
+  liveSocket = ws;
 
   ws.onopen = () => {
     connectionState = 'connected';
@@ -644,6 +690,7 @@ function connectWebSocket() {
     try {
       if (simTimer) return;
       const frame = JSON.parse(event.data);
+      syncSourceSelector(frame);
       pushFrame(frame);
     } catch (err) {
       console.error(err);
@@ -651,6 +698,7 @@ function connectWebSocket() {
   };
 
   ws.onclose = () => {
+    if (liveSocket === ws) liveSocket = null;
     connectionState = 'reconnecting';
     statusDot.style.background = '#c23a27';
     statusText.textContent = t('reconnecting');
@@ -801,6 +849,17 @@ function centerToCurrent() {
   const p = currentMarker.getLatLng();
   map.setView([p.lat, p.lng], Math.max(map.getZoom(), 19));
   addEvent(t('centered', { lat: p.lat.toFixed(7), lon: p.lng.toFixed(7) }), '#1b6c8d');
+}
+
+if (rtkSourceSelect) {
+  rtkSourceSelect.addEventListener('change', () => {
+    const source = rtkSourceSelect.value;
+    if (!source) return;
+    if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+      liveSocket.send(JSON.stringify({ type: 'set_active_source', source }));
+      addEvent(`Active RTK switched to ${source}`, '#1b6c8d');
+    }
+  });
 }
 
 csvFile.addEventListener('change', async (ev) => {

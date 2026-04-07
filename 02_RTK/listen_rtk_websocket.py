@@ -30,8 +30,8 @@ async def listen_rtk(ws_url: str):
         async with websockets.connect(ws_url) as websocket:
             print("✓ Connected!")
             print("\nReceiving RTK data...\n")
-            print("Lat (°)      | Lon (°)       | Alt (m)  | Fix Type      | Sats | HDOP  | Speed | Track")
-            print("-" * 100)
+            print("Lat (°)      | Lon (°)       | Alt (m)  | Fix Type      | Sats | HDOP  | Speed | Track | Source")
+            print("-" * 112)
             
             frame_count = 0
             async for message in websocket:
@@ -47,6 +47,7 @@ async def listen_rtk(ws_url: str):
                     speed_knots = data.get("speed_knots")
                     track_deg = data.get("track_deg")
                     source = data.get("source", "unknown")
+                    rtk_source_label = data.get("rtk_source_label", data.get("rtk_source", ""))
                     
                     fix_str = FIX_QUALITY.get(fix_quality, f"Unknown({fix_quality})")
                     
@@ -63,7 +64,7 @@ async def listen_rtk(ws_url: str):
                     print(
                         f"{lat_str} | {lon_str} | {alt_str:>7} | "
                         f"{fix_str:<13} | {num_sats:>4} | {hdop_str:>5} | "
-                        f"{speed_str:>5} | {track_str:>5} {source_marker}"
+                        f"{speed_str:>5} | {track_str:>5} {source_marker} {rtk_source_label}"
                     )
                     
                     frame_count += 1

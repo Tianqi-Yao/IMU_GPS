@@ -89,12 +89,16 @@ label {
   color: var(--muted);
 }
 
-input[type="number"], input[type="file"] {
+input[type="number"], input[type="file"], select {
   font: inherit;
   border: 1px solid #bfc9c1;
   border-radius: 8px;
   padding: 6px 8px;
   background: #fff;
+}
+
+select {
+  min-width: 220px;
 }
 
 button {
