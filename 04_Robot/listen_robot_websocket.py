@@ -15,12 +15,19 @@ Usage:
 import asyncio
 import json
 import argparse
+from pathlib import Path
+from datetime import datetime
 import websockets
 
 
 async def listen(host: str, port: int) -> None:
     url = f"ws://{host}:{port}/"
     print(f"Connecting to {url} …")
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_log_path = Path(".") / "data_log" / f"robot_raw_{ts}.jsonl"
+    raw_log_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Raw log file: {raw_log_path}")
 
     while True:
         try:
@@ -29,7 +36,19 @@ async def listen(host: str, port: int) -> None:
 
                 async for raw in ws:
                     try:
-                        msg = json.loads(raw)
+                        raw_text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+                        recv_dt = datetime.now()
+                        recv_ts_iso = recv_dt.isoformat(timespec="milliseconds")
+                        recv_ts_epoch = recv_dt.timestamp()
+
+                        msg = json.loads(raw_text)
+                        msg["log_recv_ts"] = recv_ts_epoch
+                        msg["log_recv_iso"] = recv_ts_iso
+
+                        with raw_log_path.open("a", encoding="utf-8") as raw_log_file:
+                            raw_log_file.write(json.dumps(msg, ensure_ascii=False))
+                            raw_log_file.write("\n")
+
                         msg_type = msg.get("type")
 
                         if msg_type == "imu":

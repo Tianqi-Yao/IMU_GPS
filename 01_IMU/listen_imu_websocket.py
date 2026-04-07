@@ -10,6 +10,7 @@ import asyncio
 import json
 import argparse
 from pathlib import Path
+from datetime import datetime
 import websockets
 
 
@@ -17,8 +18,10 @@ async def listen_imu(ws_url: str):
     """Connect to imu_bridge.py WebSocket and listen for IMU data."""
     print(f"Connecting to {ws_url}...")
 
-    raw_log_path = Path(".") / "data_log" / "imu_raw.jsonl"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_log_path = Path(".") / "data_log" / f"imu_raw_{ts}.jsonl"
     raw_log_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Raw log file: {raw_log_path}")
     
     try:
         async with websockets.connect(ws_url) as websocket:
@@ -31,11 +34,17 @@ async def listen_imu(ws_url: str):
             async for message in websocket:
                 try:
                     raw_text = message.decode("utf-8", errors="replace") if isinstance(message, bytes) else str(message)
-                    with raw_log_path.open("a", encoding="utf-8") as raw_log_file:
-                        raw_log_file.write(raw_text)
-                        raw_log_file.write("\n")
+                    recv_dt = datetime.now()
+                    recv_ts_iso = recv_dt.isoformat(timespec="milliseconds")
+                    recv_ts_epoch = recv_dt.timestamp()
 
                     data = json.loads(raw_text)
+                    data["log_recv_ts"] = recv_ts_epoch
+                    data["log_recv_iso"] = recv_ts_iso
+
+                    with raw_log_path.open("a", encoding="utf-8") as raw_log_file:
+                        raw_log_file.write(json.dumps(data, ensure_ascii=False))
+                        raw_log_file.write("\n")
                     
                     euler = data.get("euler", {})
                     heading_data = data.get("heading", {})
