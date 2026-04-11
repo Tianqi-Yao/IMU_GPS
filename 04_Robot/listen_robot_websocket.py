@@ -9,15 +9,16 @@ Shows the simplest way to:
 
 Usage:
     python listen_robot_websocket.py
-    python listen_robot_websocket.py --host localhost --port 8889
 """
 
 import asyncio
 import json
-import argparse
 from pathlib import Path
 from datetime import datetime
 import websockets
+
+HOST = "localhost"
+PORT = 8889
 
 
 async def listen(host: str, port: int) -> None:
@@ -103,11 +104,7 @@ async def listen(host: str, port: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Minimal Robot WebSocket demo")
-    parser.add_argument("--host", default="localhost", help="Bridge hostname (default: localhost)")
-    parser.add_argument("--port", type=int, default=8889, help="WS port (default: 8889)")
-    args = parser.parse_args()
-    asyncio.run(listen(args.host, args.port))
+    asyncio.run(listen(HOST, PORT))
 
 
 if __name__ == "__main__":

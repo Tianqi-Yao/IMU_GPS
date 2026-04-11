@@ -3,7 +3,7 @@ DepthCamProcessor — depth visualization processor.
 
 Receives pre-captured RGB and depth frames from CameraDevice and composes
 various display modes.  No depthai code here; camera lifecycle is managed
-by CameraDevice in camera_bridge.py (start with --stereo flag).
+ by CameraDevice in camera_bridge.py (requires CAM_ENABLE_STEREO=True).
 """
 
 from __future__ import annotations
@@ -26,13 +26,13 @@ class DepthCamProcessor(FrameProcessor):
     """
     Depth visualization processor for OAK-D stereo cameras.
 
-    Requires CameraDevice opened with enable_stereo=True (--stereo flag).
+    Requires CameraDevice opened with enable_stereo=True (CAM_ENABLE_STEREO=True).
     Display modes: rgb, depth, rgb+depth blend.
     """
 
     PROCESSOR_NAME = "depth_cam"
     PROCESSOR_LABEL = "Depth Camera"
-    PROCESSOR_DESCRIPTION = "RGB/depth stream (requires --stereo flag at startup)"
+    PROCESSOR_DESCRIPTION = "RGB/depth stream (requires CAM_ENABLE_STEREO=True)"
 
     @classmethod
     def required_streams(cls) -> list[str]:
@@ -80,12 +80,12 @@ class DepthCamProcessor(FrameProcessor):
         # depth frame from CameraDevice is already colorized (BGR)
         depth_color = depth  # CameraDevice.get_frames handles colorization
 
-        # If depth is unavailable (no --stereo flag), overlay a warning on rgb
+        # If depth is unavailable (CAM_ENABLE_STEREO=False), overlay a warning on rgb
         if depth_color is None and rgb is not None and cv2 is not None:
             out = rgb.copy()
             cv2.putText(
                 out,
-                "No depth stream restart with --stereo",
+                "No depth stream set CAM_ENABLE_STEREO=True in config.py",
                 (10, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8,

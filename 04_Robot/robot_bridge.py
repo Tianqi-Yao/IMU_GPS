@@ -19,7 +19,7 @@ Data flow:
     HttpFileServer :ws_port → web_static/ (index.html, app.js, style.css)
 
 Usage:
-    python robot_bridge.py [--ws-port 8888] [--serial-port /dev/ttyACM0]
+    python robot_bridge.py
     # Browser:   http://localhost:8888
     # WebSocket: ws://localhost:8889
 """
@@ -34,11 +34,9 @@ try:
 except ImportError:
     _cfg = None
 
-import argparse
 import asyncio
 import json
 import logging
-import os
 import platform
 import threading
 import time
@@ -54,6 +52,17 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("robot_bridge")
+WS_MSG_VERSION = 1
+DEFAULT_WS_PORT = _cfg.ROBOT_WS_PORT if _cfg else 8888
+DEFAULT_SERIAL_PORT = _cfg.ROBOT_SERIAL_PORT if _cfg else (
+    "/dev/cu.usbmodem11301" if platform.system() == "Darwin" else "/dev/ttyACM0"
+)
+DEFAULT_SERIAL_BAUD = _cfg.ROBOT_SERIAL_BAUD if _cfg else 115200
+DEFAULT_SERIAL_TIMEOUT = _cfg.ROBOT_SERIAL_TIMEOUT if _cfg else 1.0
+DEFAULT_MAX_LINEAR = _cfg.ROBOT_MAX_LINEAR if _cfg else 1.0
+DEFAULT_MAX_ANGULAR = _cfg.ROBOT_MAX_ANGULAR if _cfg else 1.0
+DEFAULT_WATCHDOG_TIMEOUT = _cfg.ROBOT_WATCHDOG_TIMEOUT if _cfg else 2.0
+DEFAULT_NAV_WS_URL = _cfg.ROBOT_NAV_WS if _cfg else "ws://localhost:8786"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # BLOCK 1 — DATA MODEL
@@ -328,7 +337,10 @@ class RobotWebSocketServer:
     # ── Broadcast ─────────────────────────────────────────────────────────────
 
     async def _broadcast(self, obj: dict) -> None:
-        msg = json.dumps(obj)
+        payload = dict(obj)
+        if "type" in payload and "version" not in payload:
+            payload["version"] = WS_MSG_VERSION
+        msg = json.dumps(payload)
         async with self._clients_lock:
             clients = set(self._clients)
         dead = set()
@@ -370,7 +382,7 @@ class RobotWebSocketServer:
         logger.info("WS: client connected: %s", websocket.remote_address)
         try:
             await websocket.send(
-                json.dumps({"type": "state_status", "active": self._auto_active})
+                json.dumps({"type": "state_status", "active": self._auto_active, "version": WS_MSG_VERSION})
             )
         except Exception:
             pass
@@ -489,61 +501,23 @@ class RobotBridge:
         asyncio.run(ws_server.serve())
 
 
-def _default_serial_port() -> str:
-    return "/dev/cu.usbmodem11301" if platform.system() == "Darwin" else "/dev/ttyACM0"
-
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Robot Bridge — serial + nav proxy")
-    parser.add_argument(
-        "--ws-port", type=int,
-        default=int(os.environ.get("WEB_HTTP_PORT", str(_cfg.ROBOT_WS_PORT if _cfg else 8888))),
-        help="HTTP port; WebSocket = ws-port+1",
-    )
-    parser.add_argument(
-        "--serial-port",
-        default=os.environ.get("FEATHER_PORT", _cfg.ROBOT_SERIAL_PORT if _cfg else _default_serial_port()),
-        help="Feather M4 serial port",
-    )
-    parser.add_argument(
-        "--serial-baud", type=int,
-        default=int(os.environ.get("SERIAL_BAUD", str(_cfg.ROBOT_SERIAL_BAUD if _cfg else 115200))),
-    )
-    parser.add_argument(
-        "--serial-timeout", type=float,
-        default=float(os.environ.get("SERIAL_TIMEOUT", str(_cfg.ROBOT_SERIAL_TIMEOUT if _cfg else 1.0))),
-    )
-    parser.add_argument(
-        "--max-linear", type=float,
-        default=float(os.environ.get("MAX_LINEAR_VEL", str(_cfg.ROBOT_MAX_LINEAR if _cfg else 1.0))),
-        help="Max linear velocity m/s",
-    )
-    parser.add_argument(
-        "--max-angular", type=float,
-        default=float(os.environ.get("MAX_ANGULAR_VEL", str(_cfg.ROBOT_MAX_ANGULAR if _cfg else 1.0))),
-        help="Max angular velocity rad/s",
-    )
-    parser.add_argument(
-        "--watchdog-timeout", type=float,
-        default=float(os.environ.get("WATCHDOG_TIMEOUT", str(_cfg.ROBOT_WATCHDOG_TIMEOUT if _cfg else 2.0))),
-    )
-    parser.add_argument(
-        "--nav-ws-url",
-        default=os.environ.get("NAV_WS_URL", _cfg.ROBOT_NAV_WS if _cfg else "ws://localhost:8786"),
-        help="nav_bridge WebSocket URL",
-    )
-    return parser.parse_args()
-
-
 if __name__ == "__main__":
-    args = _parse_args()
+    WS_PORT = DEFAULT_WS_PORT
+    SERIAL_PORT = DEFAULT_SERIAL_PORT
+    SERIAL_BAUD = DEFAULT_SERIAL_BAUD
+    SERIAL_TIMEOUT = DEFAULT_SERIAL_TIMEOUT
+    MAX_LINEAR = DEFAULT_MAX_LINEAR
+    MAX_ANGULAR = DEFAULT_MAX_ANGULAR
+    WATCHDOG_TIMEOUT = DEFAULT_WATCHDOG_TIMEOUT
+    NAV_WS_URL = DEFAULT_NAV_WS_URL
+
     RobotBridge(
-        ws_port          = args.ws_port,
-        serial_port      = args.serial_port,
-        serial_baud      = args.serial_baud,
-        serial_timeout   = args.serial_timeout,
-        max_linear       = args.max_linear,
-        max_angular      = args.max_angular,
-        watchdog_timeout = args.watchdog_timeout,
-        nav_ws_url       = args.nav_ws_url,
+        ws_port          = WS_PORT,
+        serial_port      = SERIAL_PORT,
+        serial_baud      = SERIAL_BAUD,
+        serial_timeout   = SERIAL_TIMEOUT,
+        max_linear       = MAX_LINEAR,
+        max_angular      = MAX_ANGULAR,
+        watchdog_timeout = WATCHDOG_TIMEOUT,
+        nav_ws_url       = NAV_WS_URL,
     ).run()

@@ -4,7 +4,7 @@ DisparityDemoProcessor — minimal disparity demo.
 Shows the raw disparity map colourised with COLORMAP_JET.
 Higher value (red) = closer object. Lower value (blue) = farther away.
 
-Requires --stereo flag at startup.
+Requires CAM_ENABLE_STEREO=True and CAM_ENABLE_DISPARITY=True in config.py.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ class DisparityDemoProcessor(FrameProcessor):
 
     PROCESSOR_NAME = "disparity_demo"
     PROCESSOR_LABEL = "Disparity Demo"
-    PROCESSOR_DESCRIPTION = "Raw disparity map — red=near, blue=far (requires --stereo)"
+    PROCESSOR_DESCRIPTION = "Raw disparity map — red=near, blue=far (requires CAM_ENABLE_DISPARITY=True)"
 
     @classmethod
     def required_streams(cls) -> list[str]:

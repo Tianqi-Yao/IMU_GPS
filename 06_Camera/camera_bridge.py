@@ -23,14 +23,13 @@ Data flow:
     WebSocket ← 1 Hz broadcast ← CameraPipeline.get_status()
 
 Usage:
-    python camera_bridge.py --cam1-ip 10.95.76.11
+    python camera_bridge.py
     # Browser:  http://localhost:8815
     # MJPEG:    http://localhost:8080
 """
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import base64
 import datetime
@@ -96,6 +95,21 @@ def _setup_logger() -> logging.Logger:
 
 
 logger = _setup_logger()
+WS_MSG_TYPE_CAMERA_STATUS = "camera_status"
+WS_MSG_VERSION = 1
+DEFAULT_WS_PORT = _cfg.CAM_WS_PORT if _cfg else 8815
+DEFAULT_CAM1_IP = _cfg.CAM1_IP if _cfg else "10.95.76.11"
+DEFAULT_CAM2_IP = _cfg.CAM2_IP if _cfg else "10.95.76.10"
+DEFAULT_CAM_SELECTION = 1
+DEFAULT_CAM1_STREAM_PORT = _cfg.CAM1_STREAM_PORT if _cfg else 8080
+DEFAULT_CAM2_STREAM_PORT = _cfg.CAM2_STREAM_PORT if _cfg else 8081
+DEFAULT_FPS = _cfg.CAM_FPS if _cfg else 25
+DEFAULT_WIDTH = _cfg.CAM_WIDTH if _cfg else 640
+DEFAULT_HEIGHT = _cfg.CAM_HEIGHT if _cfg else 480
+DEFAULT_MJPEG_QUALITY = _cfg.CAM_MJPEG_QUALITY if _cfg else 80
+DEFAULT_PLUGIN = _cfg.CAM_DEFAULT_PLUGIN if _cfg else "simple_color"
+DEFAULT_STEREO = _cfg.CAM_ENABLE_STEREO if _cfg else False
+DEFAULT_DISPARITY = _cfg.CAM_ENABLE_DISPARITY if _cfg else False
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -126,6 +140,8 @@ class CameraFrame:
 
     def to_dict(self) -> dict:
         return {
+            "type": WS_MSG_TYPE_CAMERA_STATUS,
+            "version": WS_MSG_VERSION,
             "cam_selection": self.cam_selection,
             "streaming": self.streaming,
             "fps": round(self.fps, 1),
@@ -1108,89 +1124,44 @@ class CameraBridge:
             snapshots_dir = self._static_dir / "snapshots"
             try:
                 url = self._pipeline.take_snapshot(cam_id, snapshots_dir)
-                return json.dumps({"type": "snapshot_ready", "url": url})
+                return json.dumps({"type": "snapshot_ready", "version": WS_MSG_VERSION, "url": url})
             except Exception as exc:
                 logger.warning("CameraBridge: snapshot error: %s", exc)
-                return json.dumps({"type": "snapshot_error", "error": str(exc)})
+                return json.dumps({"type": "snapshot_error", "version": WS_MSG_VERSION, "error": str(exc)})
 
         else:
             logger.debug("CameraBridge: unknown message type: %s", msg_type)
         return None
 
 
-# ── Entry Point ───────────────────────────────────────────────────────────────
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="OAK-D camera MJPEG streaming bridge with WebSocket control"
-    )
-    _c = _cfg
-    parser.add_argument(
-        "--ws-port", type=int, default=_c.CAM_WS_PORT if _c else 8815,
-        help="HTTP port for web UI; WebSocket uses ws-port+1",
-    )
-    parser.add_argument(
-        "--cam1-ip", default=_c.CAM1_IP if _c else "10.95.76.11",
-        help="OAK-D camera 1 IP address",
-    )
-    parser.add_argument(
-        "--cam2-ip", default=_c.CAM2_IP if _c else "10.95.76.10",
-        help="OAK-D camera 2 IP address",
-    )
-    parser.add_argument(
-        "--cam-selection", type=int, default=1, choices=[1, 2],
-        help="Initial camera selection (default: 1)",
-    )
-    parser.add_argument(
-        "--cam1-stream-port", type=int, default=_c.CAM1_STREAM_PORT if _c else 8080,
-        help="MJPEG stream port for camera 1",
-    )
-    parser.add_argument(
-        "--cam2-stream-port", type=int, default=_c.CAM2_STREAM_PORT if _c else 8081,
-        help="MJPEG stream port for camera 2",
-    )
-    parser.add_argument("--fps", type=int, default=_c.CAM_FPS if _c else 25,
-                        help="Camera FPS")
-    parser.add_argument("--width", type=int, default=_c.CAM_WIDTH if _c else 640,
-                        help="Frame width (pixels)")
-    parser.add_argument("--height", type=int, default=_c.CAM_HEIGHT if _c else 480,
-                        help="Frame height (pixels)")
-    parser.add_argument(
-        "--mjpeg-quality", type=int, default=_c.CAM_MJPEG_QUALITY if _c else 80,
-        help="JPEG encoding quality 1-100",
-    )
-    parser.add_argument(
-        "--plugin", default=_c.CAM_DEFAULT_PLUGIN if _c else "simple_color",
-        help="Initial plugin name",
-    )
-    parser.add_argument(
-        "--stereo", action=argparse.BooleanOptionalAction,
-        default=_c.CAM_ENABLE_STEREO if _c else False,
-        help="Enable stereo depth nodes (Left/Right/StereoDepth)",
-    )
-    parser.add_argument(
-        "--disparity", action=argparse.BooleanOptionalAction,
-        default=_c.CAM_ENABLE_DISPARITY if _c else False,
-        help="Enable raw disparity stream (extra CPU/bandwidth; off by default)",
-    )
-    return parser.parse_args()
-
-
 if __name__ == "__main__":
-    args = _parse_args()
+    WS_PORT = DEFAULT_WS_PORT
+    CAM1_IP = DEFAULT_CAM1_IP
+    CAM2_IP = DEFAULT_CAM2_IP
+    CAM_SELECTION = DEFAULT_CAM_SELECTION
+    CAM1_STREAM_PORT = DEFAULT_CAM1_STREAM_PORT
+    CAM2_STREAM_PORT = DEFAULT_CAM2_STREAM_PORT
+    FPS = DEFAULT_FPS
+    WIDTH = DEFAULT_WIDTH
+    HEIGHT = DEFAULT_HEIGHT
+    MJPEG_QUALITY = DEFAULT_MJPEG_QUALITY
+    PLUGIN = DEFAULT_PLUGIN
+    ENABLE_STEREO = DEFAULT_STEREO
+    ENABLE_DISPARITY = DEFAULT_DISPARITY
+
     CameraBridge(
-        ws_port=args.ws_port,
-        cam1_ip=args.cam1_ip,
-        cam2_ip=args.cam2_ip,
-        cam_selection=args.cam_selection,
-        cam1_stream_port=args.cam1_stream_port,
-        cam2_stream_port=args.cam2_stream_port,
-        fps=args.fps,
-        width=args.width,
-        height=args.height,
-        quality=args.mjpeg_quality,
+        ws_port=WS_PORT,
+        cam1_ip=CAM1_IP,
+        cam2_ip=CAM2_IP,
+        cam_selection=CAM_SELECTION,
+        cam1_stream_port=CAM1_STREAM_PORT,
+        cam2_stream_port=CAM2_STREAM_PORT,
+        fps=FPS,
+        width=WIDTH,
+        height=HEIGHT,
+        quality=MJPEG_QUALITY,
         static_dir=Path(__file__).parent / "web_static",
-        plugin=args.plugin,
-        enable_stereo=args.stereo,
-        enable_disparity=args.disparity,
+        plugin=PLUGIN,
+        enable_stereo=ENABLE_STEREO,
+        enable_disparity=ENABLE_DISPARITY,
     ).run()

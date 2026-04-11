@@ -4,7 +4,6 @@ send_robot_only_demo.py — Minimal sender demo for robot_bridge WebSocket.
 
 Usage:
     python send_robot_only_demo.py
-    python send_robot_only_demo.py --host localhost --port 8889
 
 Commands:
     w: forward   s: backward   a: left turn   d: right turn
@@ -13,11 +12,13 @@ Commands:
     q: quit
 """
 
-import argparse
 import asyncio
 import json
 
 import websockets
+
+HOST = "localhost"
+PORT = 8889
 
 
 async def run_sender(host: str, port: int) -> None:
@@ -64,13 +65,8 @@ async def run_sender(host: str, port: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Minimal sender demo for robot_bridge")
-    parser.add_argument("--host", default="localhost", help="robot_bridge host")
-    parser.add_argument("--port", type=int, default=8889, help="robot_bridge ws port")
-    args = parser.parse_args()
-
     try:
-        asyncio.run(run_sender(args.host, args.port))
+        asyncio.run(run_sender(HOST, PORT))
     except KeyboardInterrupt:
         print("\nStopped")
 

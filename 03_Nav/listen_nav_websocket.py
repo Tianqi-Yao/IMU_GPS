@@ -3,13 +3,16 @@
 Minimal WebSocket client to listen to aggregated Nav data from nav_bridge.py
 
 Usage:
-    python listen_nav_websocket.py --url ws://localhost:8786
+    python listen_nav_websocket.py
 """
 
 import asyncio
 import json
-import argparse
+from datetime import datetime
+from pathlib import Path
 import websockets
+
+WS_URL = "ws://localhost:8786"
 
 
 # Fix quality descriptions
@@ -26,6 +29,11 @@ async def listen_nav(ws_url: str):
     """Connect to nav_bridge.py WebSocket and listen for aggregated nav data."""
     print(f"Connecting to {ws_url}...")
     
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_log_path = Path(".") / "data_log" / f"nav_raw_{ts}.jsonl"
+    raw_log_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Raw log file: {raw_log_path}")
+
     try:
         async with websockets.connect(ws_url) as websocket:
             print("✓ Connected!")
@@ -39,7 +47,18 @@ async def listen_nav(ws_url: str):
             frame_count = 0
             async for message in websocket:
                 try:
-                    data = json.loads(message)
+                    raw_text = message.decode("utf-8", errors="replace") if isinstance(message, bytes) else str(message)
+                    recv_dt = datetime.now()
+                    recv_ts_iso = recv_dt.isoformat(timespec="milliseconds")
+                    recv_ts_epoch = recv_dt.timestamp()
+
+                    data = json.loads(raw_text)
+                    data["log_recv_ts"] = recv_ts_epoch
+                    data["log_recv_iso"] = recv_ts_iso
+
+                    with raw_log_path.open("a", encoding="utf-8") as raw_log_file:
+                        raw_log_file.write(json.dumps(data, ensure_ascii=False))
+                        raw_log_file.write("\n")
                     
                     # Extract IMU data
                     imu = data.get("imu", {})
@@ -92,15 +111,7 @@ async def listen_nav(ws_url: str):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Listen to aggregated Nav data from nav_bridge.py WebSocket")
-    parser.add_argument(
-        "--url",
-        default="ws://localhost:8786",
-        help="WebSocket URL (default: ws://localhost:8786)"
-    )
-    args = parser.parse_args()
-    
     try:
-        asyncio.run(listen_nav(args.url))
+        asyncio.run(listen_nav(WS_URL))
     except KeyboardInterrupt:
         print("\n✓ Stopped")

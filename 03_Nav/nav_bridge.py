@@ -10,7 +10,7 @@ Data flow:
                                                                         NavWebSocketServer.broadcast() → browser
 
 Usage:
-    python nav_bridge.py --nav-port 8785 --imu-ws ws://localhost:8766 --rtk-ws ws://localhost:8776
+    python nav_bridge.py
     # Browser: http://localhost:8785
 """
 
@@ -24,7 +24,6 @@ try:
 except ImportError:
     _cfg = None
 
-import argparse
 import asyncio
 import json
 import logging
@@ -38,6 +37,13 @@ from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 
 import websockets
+
+WS_MSG_TYPE_NAV_FRAME = "nav_frame"
+WS_MSG_VERSION = 1
+DEFAULT_NAV_PORT = _cfg.NAV_WS_PORT if _cfg else 8785
+DEFAULT_IMU_WS = _cfg.NAV_IMU_WS if _cfg else "ws://localhost:8766"
+DEFAULT_RTK_WS = _cfg.NAV_RTK_WS if _cfg else "ws://localhost:8776"
+DEFAULT_HZ = _cfg.NAV_HZ if _cfg else 10.0
 
 
 # ── Logger setup ─────────────────────────────────────────────────────────────
@@ -81,6 +87,8 @@ class NavPayload:
     def to_dict(self) -> dict:
         """Serialize to broadcast-ready dict."""
         return {
+            "type": WS_MSG_TYPE_NAV_FRAME,
+            "version": WS_MSG_VERSION,
             "imu": self.imu,
             "rtk": self.rtk,
             "nav": self.nav,
@@ -633,48 +641,17 @@ class NavBridge:
                 self._nav_controller.stop_nav()
 
 
-# ── Entry Point ───────────────────────────────────────────────────────────────
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Navigation aggregator: merges IMU + RTK into a single WS feed"
-    )
-    parser.add_argument(
-        "--nav-port",
-        type=int,
-        default=_cfg.NAV_WS_PORT if _cfg else 8785,
-        help="HTTP port for web UI; WebSocket uses nav-port+1",
-    )
-    parser.add_argument(
-        "--imu-ws",
-        default=_cfg.NAV_IMU_WS if _cfg else "ws://localhost:8766",
-        help="WebSocket URL for imu_bridge",
-    )
-    parser.add_argument(
-        "--no-imu",
-        action="store_true",
-        help="Disable IMU WebSocket and run NavBridge in RTK-only mode",
-    )
-    parser.add_argument(
-        "--rtk-ws",
-        default=_cfg.NAV_RTK_WS if _cfg else "ws://localhost:8776",
-        help="WebSocket URL for rtk_bridge",
-    )
-    parser.add_argument(
-        "--hz",
-        type=float,
-        default=_cfg.NAV_HZ if _cfg else 10.0,
-        help="Broadcast rate in Hz",
-    )
-    return parser.parse_args()
-
-
 if __name__ == "__main__":
-    args = _parse_args()
+    NAV_PORT = DEFAULT_NAV_PORT
+    IMU_WS_URL = DEFAULT_IMU_WS
+    RTK_WS_URL = DEFAULT_RTK_WS
+    NAV_HZ = DEFAULT_HZ
+    DISABLE_IMU = False
+
     NavBridge(
-        nav_port=args.nav_port,
-        imu_ws_url=None if args.no_imu else args.imu_ws,
-        rtk_ws_url=args.rtk_ws,
-        hz=args.hz,
+        nav_port=NAV_PORT,
+        imu_ws_url=None if DISABLE_IMU else IMU_WS_URL,
+        rtk_ws_url=RTK_WS_URL,
+        hz=NAV_HZ,
         static_dir=Path(__file__).parent / "web_static",
     ).run()
