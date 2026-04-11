@@ -20,11 +20,11 @@ Runs:
   - WebSocketServer asyncio server
 
 Port convention (same as 01_IMU):
-    HTTP  = --ws-port        (default 8775)
-    WebSocket = --ws-port+1  (default 8776)
+    HTTP  = ws_port          (default 8775)
+    WebSocket = ws_port+1    (default 8776)
 
 Multi-RTK mode:
-    - pass one or two --port values
+    - set one or two serial ports in SCRIPT_SERIAL_PORTS / config.py
     - the browser can switch the active source when two receivers are present
 """
 
@@ -38,7 +38,6 @@ try:
 except ImportError:
     _cfg = None
 
-import argparse
 import asyncio
 import copy
 import json
@@ -55,6 +54,18 @@ from pathlib import Path
 from typing import Optional
 
 import websockets
+
+WS_MSG_TYPE_RTK_FRAME = "rtk_frame"
+WS_MSG_VERSION = 1
+SCRIPT_SERIAL_PORTS = None
+SCRIPT_BAUD = None
+SCRIPT_WS_PORT = None
+SCRIPT_HZ = None
+SCRIPT_OPEN_BROWSER = None
+SCRIPT_HEADING_SOURCE_A = None
+SCRIPT_HEADING_SOURCE_B = None
+SCRIPT_HEADING_OFFSET_DEG = None
+SCRIPT_HEADING_MIN_BASELINE_M = None
 
 # ── LOGGING ────────────────────────────────────────────────────────────────────
 
@@ -129,6 +140,8 @@ class RTKFrame:
         """
         use_default = self.lat is None or self.lon is None
         return {
+            "type":        WS_MSG_TYPE_RTK_FRAME,
+            "version":     WS_MSG_VERSION,
             "lat":         default_lat if use_default else self.lat,
             "lon":         default_lon if use_default else self.lon,
             "alt":         self.alt,
@@ -949,65 +962,6 @@ class RTKBridge:
         )
 
 
-# ── Entry Point ────────────────────────────────────────────────────────────────
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="RTK serial-to-WebSocket bridge")
-    parser.add_argument(
-        "--port",
-        nargs="+",
-        default=_default_rtk_ports(),
-        help="Serial port(s) for RTK receiver(s); pass one or two values",
-    )
-    parser.add_argument(
-        "--baud",
-        type=int,
-        default=_cfg.RTK_BAUD if _cfg else 9600,
-        help="Serial baud rate",
-    )
-    parser.add_argument(
-        "--ws-port",
-        type=int,
-        default=_cfg.RTK_WS_PORT if _cfg else 8775,
-        help="HTTP port for web UI; WebSocket uses ws-port+1",
-    )
-    parser.add_argument(
-        "--hz",
-        type=float,
-        default=_cfg.RTK_HZ if _cfg else 5.0,
-        help="Broadcast rate in Hz",
-    )
-    parser.add_argument(
-        "--open-browser",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Auto-open browser after startup (default: true)",
-    )
-    parser.add_argument(
-        "--heading-source-a",
-        default=_cfg.RTK_HEADING_SOURCE_A if _cfg and hasattr(_cfg, "RTK_HEADING_SOURCE_A") else "rtk1",
-        help="Dual-RTK heading baseline start source id (default: rtk1)",
-    )
-    parser.add_argument(
-        "--heading-source-b",
-        default=_cfg.RTK_HEADING_SOURCE_B if _cfg and hasattr(_cfg, "RTK_HEADING_SOURCE_B") else "rtk2",
-        help="Dual-RTK heading baseline end source id (default: rtk2)",
-    )
-    parser.add_argument(
-        "--heading-offset-deg",
-        type=float,
-        default=_cfg.RTK_HEADING_OFFSET_DEG if _cfg and hasattr(_cfg, "RTK_HEADING_OFFSET_DEG") else 0.0,
-        help="Heading calibration offset in degrees after dual-RTK computation",
-    )
-    parser.add_argument(
-        "--heading-min-baseline-m",
-        type=float,
-        default=_cfg.RTK_HEADING_MIN_BASELINE_M if _cfg and hasattr(_cfg, "RTK_HEADING_MIN_BASELINE_M") else 0.3,
-        help="Minimum baseline length in metres required to accept dual-RTK heading",
-    )
-    return parser.parse_args()
-
-
 def _default_rtk_ports() -> list[str]:
     if _cfg is not None and hasattr(_cfg, "RTK_SERIAL_PORTS"):
         return list(getattr(_cfg, "RTK_SERIAL_PORTS"))
@@ -1017,18 +971,43 @@ def _default_rtk_ports() -> list[str]:
 
 
 if __name__ == "__main__":
-    args = _parse_args()
+    serial_ports = SCRIPT_SERIAL_PORTS if SCRIPT_SERIAL_PORTS is not None else _default_rtk_ports()
+    baud = SCRIPT_BAUD if SCRIPT_BAUD is not None else (_cfg.RTK_BAUD if _cfg else 9600)
+    ws_port = SCRIPT_WS_PORT if SCRIPT_WS_PORT is not None else (_cfg.RTK_WS_PORT if _cfg else 8775)
+    hz = SCRIPT_HZ if SCRIPT_HZ is not None else (_cfg.RTK_HZ if _cfg else 5.0)
+    open_browser = SCRIPT_OPEN_BROWSER if SCRIPT_OPEN_BROWSER is not None else True
+    heading_source_a = (
+        SCRIPT_HEADING_SOURCE_A
+        if SCRIPT_HEADING_SOURCE_A is not None
+        else (_cfg.RTK_HEADING_SOURCE_A if _cfg and hasattr(_cfg, "RTK_HEADING_SOURCE_A") else "rtk1")
+    )
+    heading_source_b = (
+        SCRIPT_HEADING_SOURCE_B
+        if SCRIPT_HEADING_SOURCE_B is not None
+        else (_cfg.RTK_HEADING_SOURCE_B if _cfg and hasattr(_cfg, "RTK_HEADING_SOURCE_B") else "rtk2")
+    )
+    heading_offset_deg = (
+        SCRIPT_HEADING_OFFSET_DEG
+        if SCRIPT_HEADING_OFFSET_DEG is not None
+        else (_cfg.RTK_HEADING_OFFSET_DEG if _cfg and hasattr(_cfg, "RTK_HEADING_OFFSET_DEG") else 0.0)
+    )
+    heading_min_baseline_m = (
+        SCRIPT_HEADING_MIN_BASELINE_M
+        if SCRIPT_HEADING_MIN_BASELINE_M is not None
+        else (_cfg.RTK_HEADING_MIN_BASELINE_M if _cfg and hasattr(_cfg, "RTK_HEADING_MIN_BASELINE_M") else 0.3)
+    )
+
     RTKBridge(
-        serial_ports=args.port,
-        baud=args.baud,
-        ws_port=args.ws_port,
-        hz=args.hz,
+        serial_ports=serial_ports,
+        baud=baud,
+        ws_port=ws_port,
+        hz=hz,
         static_dir=Path(__file__).parent / "web_static",
         default_lat=DEFAULT_LAT,
         default_lon=DEFAULT_LON,
-        open_browser=args.open_browser,
-        heading_source_a=args.heading_source_a,
-        heading_source_b=args.heading_source_b,
-        heading_offset_deg=args.heading_offset_deg,
-        heading_min_baseline_m=args.heading_min_baseline_m,
+        open_browser=open_browser,
+        heading_source_a=heading_source_a,
+        heading_source_b=heading_source_b,
+        heading_offset_deg=heading_offset_deg,
+        heading_min_baseline_m=heading_min_baseline_m,
     ).run()

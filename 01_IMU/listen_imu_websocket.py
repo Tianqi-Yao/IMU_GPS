@@ -3,15 +3,16 @@
 Minimal WebSocket client to listen to IMU data from imu_bridge.py
 
 Usage:
-    python listen_imu_websocket.py --url ws://localhost:8766
+    python listen_imu_websocket.py
 """
 
 import asyncio
 import json
-import argparse
 from pathlib import Path
 from datetime import datetime
 import websockets
+
+WS_URL = "ws://localhost:8766"
 
 
 async def listen_imu(ws_url: str):
@@ -81,15 +82,7 @@ async def listen_imu(ws_url: str):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Listen to IMU data from imu_bridge.py WebSocket")
-    parser.add_argument(
-        "--url",
-        default="ws://localhost:8766",
-        help="WebSocket URL (default: ws://localhost:8766)"
-    )
-    args = parser.parse_args()
-    
     try:
-        asyncio.run(listen_imu(args.url))
+        asyncio.run(listen_imu(WS_URL))
     except KeyboardInterrupt:
         print("\n✓ Stopped")

@@ -3,15 +3,16 @@
 Minimal WebSocket client to listen to RTK data from rtk_bridge.py
 
 Usage:
-    python listen_rtk_websocket.py --url ws://localhost:8776
+    python listen_rtk_websocket.py
 """
 
 import asyncio
 import json
-import argparse
 from pathlib import Path
 from datetime import datetime
 import websockets
+
+WS_URL = "ws://localhost:8776"
 
 
 # Fix quality descriptions
@@ -130,15 +131,7 @@ async def listen_rtk(ws_url: str):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Listen to RTK data from rtk_bridge.py WebSocket")
-    parser.add_argument(
-        "--url",
-        default="ws://localhost:8776",
-        help="WebSocket URL (default: ws://localhost:8776)"
-    )
-    args = parser.parse_args()
-    
     try:
-        asyncio.run(listen_rtk(args.url))
+        asyncio.run(listen_rtk(WS_URL))
     except KeyboardInterrupt:
         print("\n✓ Stopped")

@@ -7,7 +7,7 @@ Data flow:
                (Pipeline: _parse → _enrich_euler → _enrich_hz → _serialize)
 
 Usage:
-    python imu_bridge.py --port /dev/ttyACM0 --baud 921600 --ws-port 8765
+    python imu_bridge.py
     # Browser: http://localhost:8765
 """
 
@@ -21,7 +21,6 @@ try:
 except ImportError:
     _cfg = None
 
-import argparse
 import asyncio
 import json
 import logging
@@ -36,6 +35,13 @@ from pathlib import Path
 
 import serial
 import websockets
+
+WS_MSG_TYPE_IMU_FRAME = "imu_frame"
+WS_MSG_VERSION = 1
+DEFAULT_SERIAL_PORT = _cfg.IMU_SERIAL_PORT if _cfg else "/dev/cu.usbmodem101"
+DEFAULT_BAUD = _cfg.IMU_BAUD if _cfg else 921600
+DEFAULT_WS_PORT = _cfg.IMU_WS_PORT if _cfg else 8765
+DEFAULT_NORTH_OFFSET = _cfg.IMU_NORTH_OFFSET if _cfg else 0.0
 
 
 # ── Logger setup ─────────────────────────────────────────────────────────────
@@ -90,6 +96,8 @@ class IMUFrame:
     def to_dict(self) -> dict:
         """Serialise frame to the outbound dict shape expected by the browser."""
         payload: dict = {
+            "type": WS_MSG_TYPE_IMU_FRAME,
+            "version": WS_MSG_VERSION,
             "rot": {"qi": self.qi, "qj": self.qj, "qk": self.qk, "qr": self.qr},
         }
         if self.roll is not None:
@@ -664,45 +672,18 @@ class IMUBridge:
                 logger.warning(f"Invalid set_north_offset value: {exc}")
 
 
-# ── Entry Point ───────────────────────────────────────────────────────────────
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="BNO085 serial-to-WebSocket bridge"
-    )
-    parser.add_argument(
-        "--port",
-        default=_cfg.IMU_SERIAL_PORT if _cfg else "/dev/cu.usbmodem101",
-        help="Serial port device",
-    )
-    parser.add_argument(
-        "--baud",
-        type=int,
-        default=_cfg.IMU_BAUD if _cfg else 921600,
-        help="Serial baud rate",
-    )
-    parser.add_argument(
-        "--ws-port",
-        type=int,
-        default=_cfg.IMU_WS_PORT if _cfg else 8765,
-        help="HTTP port for web UI; WebSocket uses ws-port+1",
-    )
-    parser.add_argument(
-        "--north-offset",
-        type=float,
-        default=_cfg.IMU_NORTH_OFFSET if _cfg else 0.0,
-        help="Initial north offset in degrees applied to yaw",
-    )
-    return parser.parse_args()
-
-
 if __name__ == "__main__":
-    args = _parse_args()
+    # Runtime parameters are configured here (or in root config.py).
+    SERIAL_PORT = DEFAULT_SERIAL_PORT
+    BAUD = DEFAULT_BAUD
+    WS_PORT = DEFAULT_WS_PORT
+    NORTH_OFFSET_DEG = DEFAULT_NORTH_OFFSET
+
     static_dir = Path(__file__).parent / "web_static"
     IMUBridge(
-        serial_port=args.port,
-        baud=args.baud,
-        ws_port=args.ws_port,
+        serial_port=SERIAL_PORT,
+        baud=BAUD,
+        ws_port=WS_PORT,
         static_dir=static_dir,
-        north_offset_deg=args.north_offset,
+        north_offset_deg=NORTH_OFFSET_DEG,
     ).run()

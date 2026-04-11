@@ -3,14 +3,11 @@
 Download map tiles around a center point into web_static/assets/tiles for LAN/offline use.
 
 Example:
-  python download_tiles.py \
-    --lat 38.9412928598587 --lon -92.31884600793728 \
-    --radius-miles 50 --zoom-min 12 --zoom-max 18
+  python download_map.py
 """
 
 from __future__ import annotations
 
-import argparse
 import math
 import time
 from pathlib import Path
@@ -18,6 +15,17 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 EARTH_RADIUS_M = 6371008.8 # mean Earth radius in meters
+LAT = 38.9412928598587
+LON = -92.31884600793728
+RADIUS_MILES = 0.5
+ZOOM_MIN = 1
+ZOOM_MAX = 19
+URL_TEMPLATE = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+OUT_DIR = Path(__file__).resolve().parents[1] / "web_static" / "assets" / "tiles"
+TIMEOUT = 10.0
+RETRIES = 2
+SLEEP = 0.1
+OVERWRITE = False
 
 
 def deg2num(lat_deg: float, lon_deg: float, zoom: int) -> tuple[int, int]:
@@ -61,46 +69,20 @@ def fetch_tile(url: str, out_path: Path, timeout: float, retries: int, sleep_s: 
     return False
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Download XYZ tiles for offline/LAN usage")
-    p.add_argument("--lat", type=float, default=38.9412928598587)
-    p.add_argument("--lon", type=float, default=-92.31884600793728)
-    p.add_argument("--radius-miles", type=float, default=0.5)
-    p.add_argument("--zoom-min", type=int, default=1)
-    p.add_argument("--zoom-max", type=int, default=19) 
-    p.add_argument(
-        "--url-template",
-        type=str,
-        default="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        help="XYZ tile template URL",
-    )
-    p.add_argument(
-        "--out-dir",
-        type=Path,
-        default=Path(__file__).resolve().parents[1] / "web_static" / "assets" / "tiles",
-    )
-    p.add_argument("--timeout", type=float, default=10.0)
-    p.add_argument("--retries", type=int, default=2)
-    p.add_argument("--sleep", type=float, default=0.1, help="seconds between retries")
-    p.add_argument("--overwrite", action="store_true")
-    return p.parse_args()
-
-
 def main() -> None:
-    args = parse_args()
-    radius_m = args.radius_miles * 1609.344
+    radius_m = RADIUS_MILES * 1609.344
 
-    min_lat, min_lon, max_lat, max_lon = bounding_box(args.lat, args.lon, radius_m)
-    print(f"Center=({args.lat:.8f}, {args.lon:.8f}) radius={args.radius_miles} miles")
+    min_lat, min_lon, max_lat, max_lon = bounding_box(LAT, LON, radius_m)
+    print(f"Center=({LAT:.8f}, {LON:.8f}) radius={RADIUS_MILES} miles")
     print(f"BBox lat[{min_lat:.6f},{max_lat:.6f}] lon[{min_lon:.6f},{max_lon:.6f}]")
-    print(f"Output: {args.out_dir}")
+    print(f"Output: {OUT_DIR}")
 
     total = 0
     skipped = 0
     ok = 0
     failed = 0
 
-    for z in range(args.zoom_min, args.zoom_max + 1):
+    for z in range(ZOOM_MIN, ZOOM_MAX + 1):
         x0, y1 = deg2num(max_lat, min_lon, z)
         x1, y0 = deg2num(min_lat, max_lon, z)
         xmin, xmax = sorted((x0, x1))
@@ -112,13 +94,13 @@ def main() -> None:
         for x in range(xmin, xmax + 1):
             for y in range(ymin, ymax + 1):
                 total += 1
-                out_path = args.out_dir / str(z) / str(x) / f"{y}.png"
-                if out_path.exists() and not args.overwrite:
+                out_path = OUT_DIR / str(z) / str(x) / f"{y}.png"
+                if out_path.exists() and not OVERWRITE:
                     skipped += 1
                     continue
 
-                url = args.url_template.format(z=z, x=x, y=y)
-                if fetch_tile(url, out_path, args.timeout, args.retries, args.sleep):
+                url = URL_TEMPLATE.format(z=z, x=x, y=y)
+                if fetch_tile(url, out_path, TIMEOUT, RETRIES, SLEEP):
                     ok += 1
                 else:
                     failed += 1
