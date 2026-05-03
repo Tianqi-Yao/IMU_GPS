@@ -9,7 +9,7 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 
-DATA = Path(__file__).parent.parent / "data_log" / "robot_raw_20260501_200339.jsonl"
+DATA = Path(__file__).parent.parent / "data_log" / "robot_raw_20260502_200501.jsonl"
 OUT = Path(__file__).parent / "imu_attitude.png"
 
 records = [json.loads(l) for l in DATA.read_text().splitlines()]
