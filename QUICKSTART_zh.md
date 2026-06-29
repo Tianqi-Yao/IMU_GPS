@@ -73,51 +73,36 @@ ls /dev/ttyACM*       # Linux
 
 ## 五、录制数据
 
-### 5.1 IMU 数据
+### 5.1 一键录制全部（推荐）
 
 ```bash
-python 01_IMU/listen_imu_websocket.py
+python record_all.py
 ```
 
-运行期间自动保存 → `01_IMU/data_log/imu_raw_{时间戳}.jsonl`，`Ctrl-C` 停止。
-
-### 5.2 RTK 数据
-
-```bash
-python 02_RTK/listen_rtk_websocket.py
-```
-
-自动保存 → `02_RTK/data_log/rtk_raw_{时间戳}.jsonl`。
-
-### 5.3 机器人遥测
-
-打开 http://localhost:8888，点击 **● REC** 开始录制，再次点击停止。
-
-- 保存到 `04_Robot/data_log/run_{时间戳}.jsonl`
-- 内容：IMU 转发、RTK 转发、里程计（速度/角速度）、电量
-
-### 5.4 自主导航状态
-
-```bash
-python 05_AutoNav/listen_autonav.py
-```
-
-自动保存 → `05_AutoNav/data_log/autonav_raw_{时间戳}.jsonl`，同时终端实时打印导航状态。
-可在终端输入命令控制导航：`start` / `stop` / `pause` / `resume`。
-
-### 5.5 一次性启动所有 listen 工具
-
-```bash
-./start_helpers.sh
-```
-
-菜单中输入 `137`（或 `1 3 7`），同时启动 IMU + RTK + Robot listen：
+同时录制所有模块数据，`Ctrl-C` 停止，输出到统一 session 目录：
 
 ```
-1  01_IMU  listen   → 01_IMU/data_log/imu_raw_{ts}.jsonl
-3  02_RTK  listen   → 02_RTK/data_log/rtk_raw_{ts}.jsonl
-7  04_Robot listen  → 终端输出（机器人遥测需另开 REC 按钮）
+data_log/session_{时间戳}/
+    imu.jsonl            # IMU 帧（~50 Hz）
+    rtk.jsonl            # RTK 定位（~5 Hz）
+    nav.jsonl            # 融合导航（~10 Hz）
+    robot.jsonl          # 机器人遥测（~20 Hz）
+    autonav.jsonl        # 自主导航状态（~5 Hz）
+    camera_status.jsonl  # 摄像头状态（~1 Hz）
+    cam1.mp4             # 摄像头 1 视频（需摄像头在线）
+    cam2.mp4             # 摄像头 2 视频（需摄像头在线）
 ```
+
+某个 bridge 未运行时该路自动跳过，不影响其他录制。停止后打印各文件大小汇总。
+
+### 5.2 单独录制某模块
+
+| 模块 | 命令 | 保存位置 |
+|------|------|---------|
+| IMU | `python 01_IMU/listen_imu_websocket.py` | `01_IMU/data_log/imu_raw_{ts}.jsonl` |
+| RTK | `python 02_RTK/listen_rtk_websocket.py` | `02_RTK/data_log/rtk_raw_{ts}.jsonl` |
+| Robot | http://localhost:8888 点击 **● REC** | `04_Robot/data_log/run_{ts}.jsonl` |
+| AutoNav | `python 05_AutoNav/listen_autonav.py` | `05_AutoNav/data_log/autonav_raw_{ts}.jsonl` |
 
 ---
 
@@ -152,18 +137,14 @@ D = IMU 回放 + RTK 回放 + Nav bridge + Nav listen
 # 启动全部 bridge
 ./start_bridges.sh
 
+# 一键录制全部数据（另开终端）
+python record_all.py
+
 # 调试工具菜单（listen / replay）
 ./start_helpers.sh
 
 # 单独启动某模块（示例）
 cd 05_AutoNav && python autonav_bridge.py
-
-# 录制 IMU + RTK（后台运行）
-python 01_IMU/listen_imu_websocket.py &
-python 02_RTK/listen_rtk_websocket.py &
-
-# 录制自主导航状态
-python 05_AutoNav/listen_autonav.py
 
 # 停止全部 bridge
 tmux kill-session -t bridges
@@ -172,10 +153,11 @@ tmux kill-session -t bridges
 **数据文件位置：**
 
 ```
-01_IMU/data_log/imu_raw_{ts}.jsonl          # IMU 原始帧（~50 Hz）
-02_RTK/data_log/rtk_raw_{ts}.jsonl          # RTK 定位数据（~5 Hz）
-04_Robot/data_log/run_{ts}.jsonl            # 机器人遥测（需点 REC）
-05_AutoNav/data_log/autonav_raw_{ts}.jsonl  # 自主导航状态（~5 Hz）
+data_log/session_{ts}/               # record_all.py 统一输出目录
+01_IMU/data_log/imu_raw_{ts}.jsonl   # 单独录制 IMU
+02_RTK/data_log/rtk_raw_{ts}.jsonl   # 单独录制 RTK
+04_Robot/data_log/run_{ts}.jsonl     # 单独录制 Robot（需点 REC）
+05_AutoNav/data_log/autonav_raw_{ts}.jsonl  # 单独录制 AutoNav
 ```
 
 > 详细参数说明、架构图、插件开发指南见 [README_zh.md](README_zh.md)。

@@ -73,50 +73,36 @@ Launches 6 modules in a single tmux session (`bridges`), each in its own window:
 
 ## 5. Recording Data
 
-### 5.1 IMU data
+### 5.1 Record everything at once (recommended)
 
 ```bash
-python 01_IMU/listen_imu_websocket.py
+python record_all.py
 ```
 
-Auto-saves while running → `01_IMU/data_log/imu_raw_{timestamp}.jsonl`. Stop with `Ctrl-C`.
-
-### 5.2 RTK data
-
-```bash
-python 02_RTK/listen_rtk_websocket.py
-```
-
-Auto-saves → `02_RTK/data_log/rtk_raw_{timestamp}.jsonl`.
-
-### 5.3 Robot telemetry
-
-Open http://localhost:8888 and click **● REC** to start recording; click again to stop.
-
-- Saves to `04_Robot/data_log/run_{timestamp}.jsonl`
-- Contains: IMU forward, RTK forward, odometry (speed / angular rate), battery
-
-### 5.4 Autonomous navigation status
-
-```bash
-python 05_AutoNav/listen_autonav.py
-```
-
-Auto-saves → `05_AutoNav/data_log/autonav_raw_{timestamp}.jsonl`, while printing live navigation status to the terminal. Type commands to control navigation: `start` / `stop` / `pause` / `resume`.
-
-### 5.5 Start all listen tools at once
-
-```bash
-./start_helpers.sh
-```
-
-Type `137` (or `1 3 7`) to launch IMU + RTK + Robot listen in one go:
+Records all modules simultaneously. Press `Ctrl-C` to stop. Output goes to a single timestamped session directory:
 
 ```
-1  01_IMU  listen   → 01_IMU/data_log/imu_raw_{ts}.jsonl
-3  02_RTK  listen   → 02_RTK/data_log/rtk_raw_{ts}.jsonl
-7  04_Robot listen  → terminal output (use REC button for robot log)
+data_log/session_{timestamp}/
+    imu.jsonl            # IMU frames        ~50 Hz
+    rtk.jsonl            # RTK position       ~5 Hz
+    nav.jsonl            # Fused nav         ~10 Hz
+    robot.jsonl          # Robot telemetry   ~20 Hz
+    autonav.jsonl        # AutoNav status     ~5 Hz
+    camera_status.jsonl  # Camera status      ~1 Hz
+    cam1.mp4             # Camera 1 video    (if camera running)
+    cam2.mp4             # Camera 2 video    (if camera running)
 ```
+
+If a bridge is not running, that stream is skipped silently. A file size summary is printed on exit.
+
+### 5.2 Record a single module
+
+| Module | Command | Output |
+|--------|---------|--------|
+| IMU | `python 01_IMU/listen_imu_websocket.py` | `01_IMU/data_log/imu_raw_{ts}.jsonl` |
+| RTK | `python 02_RTK/listen_rtk_websocket.py` | `02_RTK/data_log/rtk_raw_{ts}.jsonl` |
+| Robot | Open http://localhost:8888, click **● REC** | `04_Robot/data_log/run_{ts}.jsonl` |
+| AutoNav | `python 05_AutoNav/listen_autonav.py` | `05_AutoNav/data_log/autonav_raw_{ts}.jsonl` |
 
 ---
 
@@ -151,18 +137,14 @@ D = IMU replay + RTK replay + Nav bridge + Nav listen
 # Start all bridges
 ./start_bridges.sh
 
+# Record everything at once (separate terminal)
+python record_all.py
+
 # Debug tools menu (listen / replay)
 ./start_helpers.sh
 
 # Start a single module
 cd 05_AutoNav && python autonav_bridge.py
-
-# Record IMU + RTK (background)
-python 01_IMU/listen_imu_websocket.py &
-python 02_RTK/listen_rtk_websocket.py &
-
-# Record autonomous navigation status
-python 05_AutoNav/listen_autonav.py
 
 # Stop all bridges
 tmux kill-session -t bridges
@@ -171,10 +153,11 @@ tmux kill-session -t bridges
 **Data file locations:**
 
 ```
-01_IMU/data_log/imu_raw_{ts}.jsonl          # IMU frames (~50 Hz)
-02_RTK/data_log/rtk_raw_{ts}.jsonl          # RTK position data (~5 Hz)
-04_Robot/data_log/run_{ts}.jsonl            # Robot telemetry (requires REC)
-05_AutoNav/data_log/autonav_raw_{ts}.jsonl  # Autonomous nav status (~5 Hz)
+data_log/session_{ts}/                       # record_all.py unified output
+01_IMU/data_log/imu_raw_{ts}.jsonl          # single-module IMU recording
+02_RTK/data_log/rtk_raw_{ts}.jsonl          # single-module RTK recording
+04_Robot/data_log/run_{ts}.jsonl            # single-module Robot (requires REC)
+05_AutoNav/data_log/autonav_raw_{ts}.jsonl  # single-module AutoNav recording
 ```
 
 > For detailed parameters, architecture diagrams, and plugin development guides see [README.md](README.md).
