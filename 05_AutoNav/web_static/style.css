@@ -123,6 +123,7 @@ body {
 .state-running { color: var(--green);  border-color: var(--green);  box-shadow: 0 0 12px rgba(63,185,80,0.3); }
 .state-paused  { color: var(--yellow); border-color: var(--yellow); }
 .state-arrived { color: var(--blue);   border-color: var(--blue);   }
+.state-lifting { color: var(--orange); border-color: var(--orange); box-shadow: 0 0 12px rgba(240,136,62,0.3); }
 
 /* ── Waypoint arrival banner ── */
 #wp-arrive-banner {
@@ -194,6 +195,63 @@ body {
 .btn-fwd { border-color: var(--blue);  color: var(--blue);  flex: 1; }
 .btn-bwd { border-color: var(--dim);   color: var(--dim);   flex: 1; }
 #manual-drive .ctrl-btn { font-size: 13px; padding: 10px 0; }
+
+/* ── Lift control ── */
+#lift-ctrl {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+.btn-lift-up   { border-color: var(--orange); color: var(--orange); flex: 1; }
+.btn-lift-stop { border-color: var(--dim);    color: var(--dim);    flex: 1; }
+.btn-lift-down { border-color: var(--yellow); color: var(--yellow); flex: 1; }
+#lift-ctrl .ctrl-btn { font-size: 12px; padding: 9px 0; }
+
+/* ── Lift duration settings ── */
+#lift-settings {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+.lift-set-label { font-size: 10px; color: var(--dim); letter-spacing: 1px; }
+.lift-set-input {
+  width: 52px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--orange);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 4px 6px;
+  text-align: center;
+}
+.btn-lift-set { border-color: var(--orange); color: var(--orange); padding: 5px 10px; margin-left: 2px; }
+
+/* ── Lateral offset control ── */
+#offset-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+  width: 100%;
+}
+.offset-label { font-size: 10px; color: var(--dim); letter-spacing: 1px; min-width: 44px; }
+.offset-val   { font-size: 12px; color: var(--blue); font-weight: bold; min-width: 42px; text-align: right; }
+#offset-slider { flex: 1; accent-color: var(--blue); cursor: pointer; }
+.btn-offset-apply { border-color: var(--blue); color: var(--blue); padding: 5px 10px; white-space: nowrap; }
+.btn-export-csv   { border-color: var(--dim);  color: var(--dim);  padding: 5px 10px; white-space: nowrap; }
+
+/* ── Path map SVG ── */
+#path-map-panel { flex: none; min-height: 0; }
+#path-map { display: block; background: #0a0e14; border-radius: 3px; }
+.pm-line-orig { fill: none; stroke: var(--blue);   stroke-width: 1.5; stroke-opacity: 0.5; }
+.pm-line-off  { fill: none; stroke: var(--orange); stroke-width: 2;   stroke-dasharray: 5 3; }
+.pm-robot  { fill: var(--green);  stroke: none; }
+.pm-target { fill: var(--yellow); stroke: none; }
 
 /* ── Heading calibration ── */
 #calib-panel {

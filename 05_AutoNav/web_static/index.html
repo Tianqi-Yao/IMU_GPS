@@ -59,6 +59,31 @@
         <button id="btn-bwd" class="ctrl-btn btn-bwd">▼ S</button>
       </div>
 
+      <!-- Lift control -->
+      <div id="lift-ctrl">
+        <button id="btn-lift-up"   class="ctrl-btn btn-lift-up">▲ LIFT UP</button>
+        <button id="btn-lift-stop" class="ctrl-btn btn-lift-stop">■ LIFT STOP</button>
+        <button id="btn-lift-down" class="ctrl-btn btn-lift-down">▼ LIFT DOWN</button>
+      </div>
+
+      <!-- Lift duration settings -->
+      <div id="lift-settings">
+        <span class="lift-set-label">UP (s)</span>
+        <input id="lift-up-s" type="number" class="lift-set-input" min="0.1" max="60" step="0.5" value="5">
+        <span class="lift-set-label">DOWN (s)</span>
+        <input id="lift-down-s" type="number" class="lift-set-input" min="0.1" max="60" step="0.5" value="5">
+        <button id="btn-lift-set" class="ctrl-btn btn-lift-set">SET</button>
+      </div>
+
+      <!-- Lateral offset control -->
+      <div id="offset-ctrl">
+        <span class="offset-label">OFFSET</span>
+        <input id="offset-slider" type="range" min="-5.0" max="5.0" step="0.1" value="0">
+        <span id="offset-value" class="offset-val">0.0 m</span>
+        <button id="btn-offset-apply" class="ctrl-btn btn-offset-apply">APPLY</button>
+        <button id="btn-export-csv" class="ctrl-btn btn-export-csv">EXPORT</button>
+      </div>
+
       <!-- Heading calibration -->
       <div id="calib-panel">
         <div class="calib-row">
@@ -139,6 +164,17 @@
         <div class="json-type">autonav_status</div>
         <pre id="json-status">waiting…</pre>
       </div>
+      <!-- Path map (SVG) -->
+      <div id="path-map-panel" class="json-block">
+        <div class="json-type">path map <span id="path-map-info" class="age">—</span></div>
+        <svg id="path-map" viewBox="0 0 260 200" width="100%" preserveAspectRatio="xMidYMid meet">
+          <polyline id="pm-original" class="pm-line-orig" points=""/>
+          <polyline id="pm-offset"   class="pm-line-off"  points=""/>
+          <circle   id="pm-robot"    class="pm-robot"  cx="-10" cy="-10" r="5"/>
+          <circle   id="pm-target"   class="pm-target" cx="-10" cy="-10" r="4"/>
+        </svg>
+      </div>
+
       <div id="wp-panel">
         <div class="json-type">waypoints</div>
         <table id="wp-table">

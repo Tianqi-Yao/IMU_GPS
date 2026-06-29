@@ -63,6 +63,8 @@ MANUAL_SPEED       = _c("AUTONAV_MANUAL_SPEED",      0.4)
 ARRIVE_FRAMES      = _c("AUTONAV_ARRIVE_FRAMES",     1)
 HEARTBEAT_INTERVAL = 0.2
 ROBOT_SEND_TIMEOUT_S = _c("AUTONAV_ROBOT_SEND_TIMEOUT_S", 2.0)
+LIFT_UP_DURATION_S   = _c("LIFT_UP_DURATION_S",   5.0)
+LIFT_DOWN_DURATION_S = _c("LIFT_DOWN_DURATION_S", 5.0)
 
 PATH_FILE = Path(__file__).parent / "path.csv"
 
@@ -85,7 +87,7 @@ logger = _setup_logger()
 
 
 def _load_default_waypoints(path: Path) -> list[dict]:
-    """Load path.csv → list of {lat, lon, type} dicts."""
+    """Load path.csv → list of {lat, lon, type, lift} dicts."""
     waypoints = []
     with open(path, newline="", encoding="utf-8") as f:
         sample = f.read(4096)
@@ -93,16 +95,17 @@ def _load_default_waypoints(path: Path) -> list[dict]:
         dialect = csv.Sniffer().sniff(sample, delimiters="\t,")
         for row in csv.DictReader(f, dialect=dialect):
             waypoints.append({
-                "lat": float(row["lat"]),
-                "lon": float(row["lon"]),
+                "lat":  float(row["lat"]),
+                "lon":  float(row["lon"]),
                 "type": str(row.get("type", "") or "").strip(),
+                "lift": str(row.get("lift", "") or "").strip().lower(),
             })
     logger.info("Loaded %d waypoints from %s", len(waypoints), path)
     return waypoints
 
 
 def _convert_csv_to_waypoints(content: str) -> list[dict]:
-    """Parse CSV text content → list of {lat, lon, type} dicts."""
+    """Parse CSV text content → list of {lat, lon, type, lift} dicts."""
     waypoints = []
     try:
         sample = content[:4096]
@@ -113,9 +116,10 @@ def _convert_csv_to_waypoints(content: str) -> list[dict]:
         reader = csv.DictReader(content.splitlines(), dialect=dialect)
         for row in reader:
             waypoints.append({
-                "lat": float(row["lat"]),
-                "lon": float(row["lon"]),
+                "lat":  float(row["lat"]),
+                "lon":  float(row["lon"]),
                 "type": str(row.get("type", "") or "").strip(),
+                "lift": str(row.get("lift", "") or "").strip().lower(),
             })
         logger.info("Parsed %d waypoints from uploaded CSV", len(waypoints))
     except Exception as exc:
@@ -221,11 +225,29 @@ def _apply_waypoint_progress(loop: "AutoNavLoop", linear: float, angular: float,
 
     loop._arrive_counter = 0
     if loop._wp_idx >= len(loop._waypoints) - 1:
+        lift_cmd = loop._waypoints[loop._wp_idx].get("lift", "")
+        if lift_cmd in ("up", "down"):
+            loop._state = "lifting"
+            loop._lift_cmd = lift_cmd
+            loop._lift_end_time = time.monotonic() + (
+                loop._lift_up_s if lift_cmd == "up" else loop._lift_down_s
+            )
+            return 0.0, 0.0, False, False
         loop._state = "arrived"
         logger.info("Arrived at destination")
         return 0.0, 0.0, False, False
 
     wp_type = loop._waypoints[loop._wp_idx].get("type", "")
+
+    lift_cmd = loop._waypoints[loop._wp_idx].get("lift", "")
+    if lift_cmd in ("up", "down"):
+        loop._state = "lifting"
+        loop._lift_cmd = lift_cmd
+        loop._lift_end_time = time.monotonic() + (
+            loop._lift_up_s if lift_cmd == "up" else loop._lift_down_s
+        )
+        return 0.0, 0.0, False, False
+
     should_pause = (loop._pause_mode == "all") or (wp_type == "pause")
     if should_pause:
         loop._waiting_at_wp = True
@@ -244,6 +266,15 @@ def _scaled_robot_command(state: str, linear: float, angular: float,
     if state == "running":
         return linear * speed_ratio, angular * speed_ratio
     return 0.0, 0.0
+
+
+def _downsample_path(waypoints: list, max_pts: int = 80) -> list:
+    """Reduce waypoints to at most max_pts for SVG display."""
+    if len(waypoints) <= max_pts:
+        return [{"lat": wp["lat"], "lon": wp["lon"]} for wp in waypoints]
+    step = len(waypoints) / max_pts
+    return [{"lat": waypoints[int(i * step)]["lat"],
+             "lon": waypoints[int(i * step)]["lon"]} for i in range(max_pts)]
 
 
 def _build_autonav_status(loop: "AutoNavLoop", heading: float | None,
@@ -288,6 +319,15 @@ def _build_autonav_status(loop: "AutoNavLoop", heading: float | None,
         "waiting_at_wp":      loop._waiting_at_wp,
         "waiting_wp_idx":     loop._wp_idx if loop._waiting_at_wp else None,
         "pause_mode":         loop._pause_mode,
+        "lift_cmd":           loop._lift_cmd if loop._state == "lifting" else "",
+        "lift_remaining_s":   max(0.0, round(loop._lift_end_time - time.monotonic(), 1)) if loop._state == "lifting" else 0.0,
+        "lift_up_s":          loop._lift_up_s,
+        "lift_down_s":        loop._lift_down_s,
+        "offset_m":           loop._offset_m,
+        "path_original":      _downsample_path(loop._original_waypoints),
+        "path_offset":        _downsample_path(loop._waypoints),
+        "robot_lat":          lat,
+        "robot_lon":          lon,
         "imu_raw":            imu_raw,
         "rtk_raw":            rtk_raw,
     }
@@ -422,6 +462,16 @@ class RobotWsClient:
         self._ws = None           # live WS reference; None when disconnected
         self._last_sent_ts: float = 0.0
 
+    async def send_lift(self, cmd: str) -> None:
+        if self._ws is None:
+            logger.warning("RobotWsClient.send_lift: not connected, dropping cmd=%s", cmd)
+            return
+        msg = json.dumps({"type": "lift_control", "cmd": cmd})
+        try:
+            await asyncio.wait_for(self._ws.send(msg), timeout=ROBOT_SEND_TIMEOUT_S)
+        except Exception as e:
+            logger.warning("RobotWsClient.send_lift: error %s", e)
+
     async def send(self, linear: float, angular: float) -> None:
         if self._ws is None:
             logger.warning("RobotWsClient.send: ws not connected, dropping (%.2f, %.2f)", linear, angular)
@@ -518,12 +568,14 @@ class AutoNavWsServer:
 # ═════════════════════════════════════════════════════════════════════════════
 
 class HttpFileServer:
-    def __init__(self, static_dir: Path, port: int) -> None:
+    def __init__(self, static_dir: Path, port: int, csv_provider=None) -> None:
         self._static_dir = static_dir
         self._port = port
+        self._csv_provider = csv_provider
 
     def run(self) -> None:
         static_dir = self._static_dir
+        csv_provider = self._csv_provider
 
         class _Handler(SimpleHTTPRequestHandler):
             def __init__(self, *args, **kwargs):
@@ -533,6 +585,18 @@ class HttpFileServer:
             def end_headers(self):
                 self.send_header("Cache-Control", "no-store")
                 super().end_headers()
+            def do_GET(self):
+                if self.path == "/export_csv" and csv_provider:
+                    data = csv_provider().encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/csv; charset=utf-8")
+                    self.send_header("Content-Disposition",
+                                     'attachment; filename="waypoints_offset.csv"')
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                else:
+                    super().do_GET()
 
         socketserver.TCPServer.allow_reuse_address = True
         try:
@@ -584,6 +648,16 @@ class AutoNavLoop:
         # "all"  = stop at every waypoint (original behavior)
         # "type" = stop only at waypoints with type == "pause"
         self._pause_mode: str = "all"
+
+        # ── Path offset ───────────────────────────────────────────────────────
+        self._original_waypoints: list[dict] = list(waypoints)
+        self._offset_m: float = 0.0
+
+        # ── Lift state ────────────────────────────────────────────────────────
+        self._lift_cmd: str = ""
+        self._lift_end_time: float = 0.0
+        self._lift_up_s: float = LIFT_UP_DURATION_S
+        self._lift_down_s: float = LIFT_DOWN_DURATION_S
 
         # ── Stop blocking mechanism ────────────────────────────────────────────
         # When stop() is called, _resume_event is cleared, blocking the main loop
@@ -676,10 +750,11 @@ class AutoNavLoop:
 
     async def cmd_load_waypoints(self, waypoints: list[dict]) -> None:
         await self.cmd_stop()
-        self._waypoints = waypoints
+        self._original_waypoints = list(waypoints)
+        self._waypoints = algo.apply_offset_to_waypoints(waypoints, self._offset_m)
         self._wp_idx = 0
         self._resume_event.set()  # keep loop running in idle so status keeps streaming
-        logger.info("Waypoints replaced: %d waypoints loaded", len(waypoints))
+        logger.info("Waypoints replaced: %d loaded (offset=%.2fm)", len(waypoints), self._offset_m)
 
     def _get_wp_window(self, window: int = 7) -> list[dict]:
         """Return up to `window` waypoints centered around current index."""
@@ -712,6 +787,12 @@ class AutoNavLoop:
     def cmd_set_speed(self, ratio: float) -> None:
         self._speed_ratio = max(0.0, min(1.0, ratio))
         logger.info("Speed ratio set to %.0f%%", self._speed_ratio * 100)
+
+    def cmd_set_offset(self, offset_m: float) -> None:
+        self._offset_m = max(-5.0, min(5.0, offset_m))
+        self._waypoints = algo.apply_offset_to_waypoints(self._original_waypoints, self._offset_m)
+        logger.info("Lateral offset set to %.2fm, %d waypoints recalculated",
+                    self._offset_m, len(self._waypoints))
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -761,6 +842,26 @@ class AutoNavLoop:
                 )
                 if waypoint_advanced:
                     logger.info("Waypoint %d/%d reached", self._wp_idx, len(self._waypoints))
+            elif self._state == "lifting":
+                linear, angular = 0.0, 0.0
+                if time.monotonic() < self._lift_end_time:
+                    await self._robot.send_lift(self._lift_cmd)
+                else:
+                    await self._robot.send_lift("stop")
+                    self._lift_cmd = ""
+                    self._state = "running"
+                    wp_type = self._waypoints[self._wp_idx].get("type", "")
+                    should_pause = (self._pause_mode == "all") or (wp_type == "pause")
+                    if self._wp_idx >= len(self._waypoints) - 1:
+                        self._state = "arrived"
+                        logger.info("WP %d lift complete, arrived at destination", self._wp_idx)
+                    elif should_pause:
+                        self._waiting_at_wp = True
+                        logger.info("WP %d lift complete, waiting for confirm", self._wp_idx)
+                    else:
+                        self._wp_idx += 1
+                        waypoint_advanced = True
+                        logger.info("WP %d lift complete, advancing to %d", self._wp_idx - 1, self._wp_idx)
 
             send_linear, send_angular = _scaled_robot_command(
                 self._state, linear, angular, self._manual_linear, self._speed_ratio
@@ -791,7 +892,8 @@ class AutoNavBridge:
     def run(self) -> None:
         static_dir = Path(__file__).parent / "web_static"
         if static_dir.exists():
-            http_server = HttpFileServer(static_dir, HTTP_PORT)
+            http_server = HttpFileServer(static_dir, HTTP_PORT,
+                                         csv_provider=self._generate_export_csv)
             threading.Thread(target=http_server.run, daemon=True, name="http").start()
             threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{HTTP_PORT}")).start()
         try:
@@ -829,6 +931,21 @@ class AutoNavBridge:
             self._nav_loop.run(),
             ws_server.serve(),
         )
+
+    def _generate_export_csv(self) -> str:
+        loop = self._nav_loop
+        if loop is None or not loop._original_waypoints:
+            return "index,orig_lat,orig_lon,offset_lat,offset_lon,type,lift\n"
+        orig = loop._original_waypoints
+        off  = loop._waypoints
+        lines = ["index,orig_lat,orig_lon,offset_lat,offset_lon,type,lift"]
+        for i, (o, w) in enumerate(zip(orig, off)):
+            lines.append(
+                f"{i},{o['lat']:.8f},{o['lon']:.8f},"
+                f"{w['lat']:.8f},{w['lon']:.8f},"
+                f"{o.get('type', '')},{o.get('lift', '')}"
+            )
+        return "\n".join(lines) + "\n"
 
     async def _handle_message(self, raw: str) -> None:
         try:
@@ -885,6 +1002,19 @@ class AutoNavBridge:
             self._nav_loop.confirm_wp()
         elif t == "set_pause_mode":
             self._nav_loop.set_pause_mode(str(msg.get("mode", "all")))
+        elif t == "lift_control":
+            cmd = str(msg.get("cmd", "stop"))
+            if self._robot is not None:
+                await self._robot.send_lift(cmd)
+        elif t == "set_lift_duration":
+            up_s   = max(0.1, float(msg.get("up_s",   self._nav_loop._lift_up_s)))
+            down_s = max(0.1, float(msg.get("down_s", self._nav_loop._lift_down_s)))
+            self._nav_loop._lift_up_s   = up_s
+            self._nav_loop._lift_down_s = down_s
+            logger.info("Lift duration updated: up=%.1fs down=%.1fs", up_s, down_s)
+        elif t == "set_offset":
+            offset_m = float(msg.get("offset_m", 0.0))
+            self._nav_loop.cmd_set_offset(offset_m)
 
 
 if __name__ == "__main__":

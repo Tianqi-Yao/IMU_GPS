@@ -64,6 +64,8 @@ AUTONAV_ROBOT_WS        = "ws://localhost:8889"     # robot_bridge WebSocket URL
 AUTONAV_GPS_TIMEOUT_S   = 5.0                       # GPS data timeout (seconds)
 AUTONAV_CONTROL_HZ      = 5.0                       # Navigation control loop frequency (Hz)
 AUTONAV_ROBOT_SEND_TIMEOUT_S = 2.0                  # Max time allowed for one robot WS send (seconds)
+LIFT_UP_DURATION_S      = 5.0                       # seconds to run UP actuator to reach high position
+LIFT_DOWN_DURATION_S    = 5.0                       # seconds to run DOWN actuator to reach low position
 
 
 # ══════════════════════════════════════════════════════════════════════════════

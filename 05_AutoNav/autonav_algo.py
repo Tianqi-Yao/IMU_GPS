@@ -99,6 +99,53 @@ def compute(lat, lon, heading_deg, waypoints, wp_idx, dt_s) -> tuple:
 
     # 到达当前航点，标记 arrived=True，外层会进入 _waiting_at_wp 状态
     arrived = dis_to_wp < REACH_TOL_M
-    
 
     return linear, angular, arrived
+
+
+def apply_offset_to_waypoints(waypoints: list, offset_m: float) -> list:
+    """Apply lateral offset (m) perpendicular to each path segment.
+    Positive = right of travel direction, negative = left.
+    Uses miter join at corners so the offset distance stays consistent.
+    Preserves all extra fields (type, lift, etc.).
+    """
+    if not waypoints or offset_m == 0.0:
+        return [dict(wp) for wp in waypoints]
+    n = len(waypoints)
+
+    def _perp_vec(lat1, lon1, lat2, lon2):
+        r = math.radians((_fast_bearing(lat1, lon1, lat2, lon2) + 90) % 360)
+        return math.cos(r), math.sin(r)  # (north-component, east-component)
+
+    MAX_MITER = 3.0  # cap miter scale for corners sharper than ~38 deg
+
+    result = []
+    for i, wp in enumerate(waypoints):
+        if i == 0:
+            px, py = _perp_vec(wp["lat"], wp["lon"],
+                                waypoints[1]["lat"], waypoints[1]["lon"])
+        elif i == n - 1:
+            px, py = _perp_vec(waypoints[i - 1]["lat"], waypoints[i - 1]["lon"],
+                                wp["lat"], wp["lon"])
+        else:
+            # Miter join: bisector of incoming and outgoing perpendiculars,
+            # scaled so that the offset distance from both segments equals offset_m.
+            px1, py1 = _perp_vec(waypoints[i - 1]["lat"], waypoints[i - 1]["lon"],
+                                  wp["lat"], wp["lon"])
+            px2, py2 = _perp_vec(wp["lat"], wp["lon"],
+                                  waypoints[i + 1]["lat"], waypoints[i + 1]["lon"])
+            sx, sy = px1 + px2, py1 + py2
+            mag = math.hypot(sx, sy)
+            if mag < 1e-6:
+                px, py = px1, py1
+            else:
+                # miter_len = 2/mag; scale = miter_len/mag so (sx,sy)*scale has that length
+                f = min(2.0 / mag, MAX_MITER) / mag
+                px, py = sx * f, sy * f
+
+        k = 111_320
+        new_wp = dict(wp)
+        new_wp["lat"] = wp["lat"] + offset_m * px / k
+        new_wp["lon"] = wp["lon"] + offset_m * py / (k * math.cos(math.radians(wp["lat"])))
+        result.append(new_wp)
+    return result

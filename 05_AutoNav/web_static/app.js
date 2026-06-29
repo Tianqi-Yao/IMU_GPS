@@ -87,8 +87,12 @@ function handleNavStatus(msg) {
 
   // State badge
   const state = msg.state || 'idle';
-  stateBadge.textContent = state.toUpperCase();
   stateBadge.className = `state-${state}`;
+  if (state === 'lifting' && msg.lift_remaining_s > 0) {
+    stateBadge.textContent = `LIFTING ${(msg.lift_cmd || '').toUpperCase()} ${msg.lift_remaining_s}s`;
+  } else {
+    stateBadge.textContent = state.toUpperCase();
+  }
 
   // Compass needles
   setNeedle(needleHdg, msg.heading_deg);
@@ -109,6 +113,12 @@ function handleNavStatus(msg) {
 
   // Sync config values from server
   if (msg.manual_speed != null) MANUAL_SPEED = msg.manual_speed;
+  if (msg.lift_up_s   != null) document.getElementById('lift-up-s').value   = msg.lift_up_s;
+  if (msg.lift_down_s != null) document.getElementById('lift-down-s').value = msg.lift_down_s;
+  if (msg.offset_m != null && !offsetSlider.matches(':active')) {
+    offsetSlider.value = msg.offset_m;
+    offsetValEl.textContent = parseFloat(msg.offset_m).toFixed(1) + ' m';
+  }
 
   // Waypoint arrival banner
   const banner = document.getElementById('wp-arrive-banner');
@@ -142,6 +152,9 @@ function handleNavStatus(msg) {
     lastUpdate.rtk = now;
     jsonRtk.textContent = JSON.stringify(msg.rtk_raw, null, 2);
   }
+
+  // Path map SVG
+  updatePathMap(msg);
 
   // Output JSON panels (throttled)
   if (now - lastUpdate.status >= JSON_THROTTLE_MS) {
@@ -325,6 +338,106 @@ btnGenPath.addEventListener('click', () => {
     setTimeout(() => { btnGenPath.textContent = orig; }, 1500);
   }, 800);
 });
+
+// ── Lateral offset ────────────────────────────────────────────
+const offsetSlider = document.getElementById('offset-slider');
+const offsetValEl  = document.getElementById('offset-value');
+
+offsetSlider.addEventListener('input', () => {
+  offsetValEl.textContent = parseFloat(offsetSlider.value).toFixed(1) + ' m';
+  sendCmd('set_offset', { offset_m: parseFloat(offsetSlider.value) });
+});
+
+document.getElementById('btn-offset-apply').addEventListener('click', () => {
+  sendCmd('set_offset', { offset_m: parseFloat(offsetSlider.value) });
+});
+
+document.getElementById('btn-export-csv').addEventListener('click', () => {
+  window.location.href = '/export_csv';
+});
+
+// ── Path map SVG ──────────────────────────────────────────────
+const SVG_W = 260, SVG_H = 200, SVG_PAD = 14;
+
+function _getBounds(...arrays) {
+  const all = arrays.flat().filter(p => p && p.lat != null);
+  if (!all.length) return null;
+  return {
+    minLat: Math.min(...all.map(p => p.lat)),
+    maxLat: Math.max(...all.map(p => p.lat)),
+    minLon: Math.min(...all.map(p => p.lon)),
+    maxLon: Math.max(...all.map(p => p.lon)),
+  };
+}
+
+function _toSvgPts(points, bounds) {
+  const { minLat, maxLat, minLon, maxLon } = bounds;
+  const dLat = maxLat - minLat || 1e-6;
+  const dLon = maxLon - minLon || 1e-6;
+  const W = SVG_W - 2 * SVG_PAD, H = SVG_H - 2 * SVG_PAD;
+  return points.map(p => {
+    const x = SVG_PAD + (p.lon - minLon) / dLon * W;
+    const y = SVG_PAD + (1 - (p.lat - minLat) / dLat) * H;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+}
+
+function _setSvgCircle(id, pt, bounds) {
+  const el = document.getElementById(id);
+  if (pt) {
+    const coords = _toSvgPts([pt], bounds).split(',');
+    el.setAttribute('cx', coords[0]);
+    el.setAttribute('cy', coords[1]);
+  } else {
+    el.setAttribute('cx', -10);
+    el.setAttribute('cy', -10);
+  }
+}
+
+function updatePathMap(d) {
+  const orig  = d.path_original || [];
+  const off   = d.path_offset   || [];
+  const robot = (d.robot_lat != null) ? { lat: d.robot_lat, lon: d.robot_lon } : null;
+  const wpTarget = (d.current_wp_idx != null && off[d.current_wp_idx]) ? off[d.current_wp_idx] : null;
+
+  const bounds = _getBounds(orig, off, robot ? [robot] : []);
+  if (!bounds) return;
+
+  document.getElementById('pm-original').setAttribute('points', orig.length ? _toSvgPts(orig, bounds) : '');
+  document.getElementById('pm-offset').setAttribute('points',   off.length  ? _toSvgPts(off,  bounds) : '');
+  _setSvgCircle('pm-robot',  robot,    bounds);
+  _setSvgCircle('pm-target', wpTarget, bounds);
+
+  if (orig.length) {
+    document.getElementById('path-map-info').textContent =
+      `${orig.length}pts  off:${(d.offset_m || 0).toFixed(1)}m`;
+  }
+}
+
+// ── Lift control ─────────────────────────────────────────────
+function sendLift(cmd) { sendCmd('lift_control', { cmd }); }
+
+document.getElementById('btn-lift-set').addEventListener('click', () => {
+  const up_s   = parseFloat(document.getElementById('lift-up-s').value)   || 5;
+  const down_s = parseFloat(document.getElementById('lift-down-s').value) || 5;
+  sendCmd('set_lift_duration', { up_s, down_s });
+});
+
+const liftUp   = document.getElementById('btn-lift-up');
+const liftStop = document.getElementById('btn-lift-stop');
+const liftDown = document.getElementById('btn-lift-down');
+
+liftUp.addEventListener('pointerdown',   () => sendLift('up'));
+liftUp.addEventListener('pointerup',     () => sendLift('stop'));
+liftUp.addEventListener('pointerleave',  () => sendLift('stop'));
+liftUp.addEventListener('pointercancel', () => sendLift('stop'));
+
+liftDown.addEventListener('pointerdown',   () => sendLift('down'));
+liftDown.addEventListener('pointerup',     () => sendLift('stop'));
+liftDown.addEventListener('pointerleave',  () => sendLift('stop'));
+liftDown.addEventListener('pointercancel', () => sendLift('stop'));
+
+liftStop.addEventListener('click', () => sendLift('stop'));
 
 // ── Boot ─────────────────────────────────────────────────────
 connectAutoNav();

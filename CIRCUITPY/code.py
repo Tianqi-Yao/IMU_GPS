@@ -16,6 +16,8 @@ import supervisor
 from canio import Message
 from farm_ng.utils.cobid import CanOpenObject
 from farm_ng.utils.main_loop import MainLoop
+from farm_ng.utils.packet import ActuatorCommands
+from farm_ng.utils.packet import actuator_bits_cmd
 from farm_ng.utils.packet import AmigaControlState
 from farm_ng.utils.packet import AmigaRpdo1
 from farm_ng.utils.packet import AmigaTpdo1
@@ -37,9 +39,10 @@ class HelloMainLoopApp:
         self.request_state = AmigaControlState.STATE_AUTO_READY
         self.inc = 0.1
 
-        self._line_buf = []  # line buffer for multi-byte V commands
+        self._line_buf = []  # line buffer for multi-byte V/H commands
         self._last_cmd_ms = supervisor.ticks_ms()  # watchdog: zero speed if no command for CMD_TIMEOUT_MS
         self.CMD_TIMEOUT_MS = 500
+        self.hbridge_bits = 0x0
 
         self._register_message_handlers()
         console.write(b"S:READY\n")  # notify host of initial firmware state on startup
@@ -97,17 +100,31 @@ class HelloMainLoopApp:
         else:
             self._last_cmd_ms = supervisor.ticks_ms()
 
+    def parse_hbridge_cmd(self, line):
+        """Parse 'H{U|D|S|P}\\n': U=up/forward, D=down/reverse, S=stop, P=passive."""
+        cmd = line[1:2].upper()
+        if cmd == 'U':
+            self.hbridge_bits = actuator_bits_cmd(a0=ActuatorCommands.forward)
+        elif cmd == 'D':
+            self.hbridge_bits = actuator_bits_cmd(a0=ActuatorCommands.reverse)
+        elif cmd == 'S':
+            self.hbridge_bits = actuator_bits_cmd(a0=ActuatorCommands.stopped)
+        elif cmd == 'P':
+            self.hbridge_bits = actuator_bits_cmd(a0=ActuatorCommands.passive)
+
     def serial_read(self):
         while console.in_waiting > 0:
             char = console.read().decode("ascii")
-            # V command (multi-byte line protocol)
-            if char == 'V' or self._line_buf:
+            # V/H commands (multi-byte line protocol)
+            if char in ('V', 'H') or self._line_buf:
                 self._line_buf.append(char)
                 if char == '\n':
                     line = ''.join(self._line_buf).strip()
                     self._line_buf.clear()
                     if line.startswith('V'):
                         self.parse_velocity_cmd(line)
+                    elif line.startswith('H'):
+                        self.parse_hbridge_cmd(line)
             else:
                 # Legacy single-byte WASD protocol
                 self.parse_wasd_cmd(char)
@@ -125,7 +142,10 @@ class HelloMainLoopApp:
                 Message(
                     id=CanOpenObject.RPDO1 | DASHBOARD_NODE_ID,
                     data=AmigaRpdo1(
-                        state_req=self.request_state, cmd_speed=self.cmd_speed, cmd_ang_rate=self.cmd_ang_rate
+                        state_req=self.request_state,
+                        cmd_speed=self.cmd_speed,
+                        cmd_ang_rate=self.cmd_ang_rate,
+                        hbridge_bits=self.hbridge_bits,
                     ).encode(),
                 )
             )

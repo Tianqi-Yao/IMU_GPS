@@ -324,6 +324,17 @@ class RobotWebSocketServer:
                 logger.error("Serial: raw write error: %s", exc)
                 self._serial_ok = False
 
+    def _send_hbridge(self, cmd: str) -> None:
+        msg = f"H{cmd}\n".encode()
+        with self._ser_lock:
+            if self._ser is None or not self._ser.is_open:
+                return
+            try:
+                self._ser.write(msg)
+            except serial.SerialException as exc:
+                logger.error("Serial: hbridge write error: %s", exc)
+                self._serial_ok = False
+
     def _start_serial_reader(self) -> None:
         threading.Thread(target=self._serial_reader_thread, name="SerialReader", daemon=True).start()
 
@@ -449,6 +460,11 @@ class RobotWebSocketServer:
                     self._last_heartbeat = time.time()
                     loop = asyncio.get_event_loop()
                     await loop.run_in_executor(None, self._send_raw, b"\r")
+                elif msg_type == "lift_control":
+                    cmd_map = {"up": "U", "down": "D", "stop": "S"}
+                    cmd = cmd_map.get(str(msg.get("cmd", "stop")).lower(), "S")
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(None, self._send_hbridge, cmd)
                 elif msg_type == "set_recording":
                     enabled = msg.get("enabled")
                     logger.warning("set_recording received: enabled=%s", enabled)
