@@ -61,11 +61,11 @@ def compute(lat, lon, heading_deg, waypoints, wp_idx, dt_s) -> tuple:
 
     # 如果没有当前坐标或航向信息，无法导航，直接返回零速度。
     if lat is None or lon is None or heading_deg is None:
-        return 0.0, 0.0, wp_idx, False
+        return 0.0, 0.0, False
 
     # 安全：如果索引越界或无航点，直接报告已到达。
     if wp_idx >= len(waypoints):
-        return 0.0, 0.0, wp_idx, True
+        return 0.0, 0.0, True
 
     # 当前航点与距离
     wp = waypoints[wp_idx]

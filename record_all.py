@@ -195,7 +195,7 @@ async def main() -> None:
     thread_stop.set()
 
     # Join camera threads without blocking the event loop
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await asyncio.gather(*[
         loop.run_in_executor(None, lambda t=t: t.join(timeout=5))
         for t in cam_threads
