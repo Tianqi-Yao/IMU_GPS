@@ -56,7 +56,11 @@ for r in nav:
         task_start_ts = r["rtk_raw"]["server_ts"]
         break
     prev_wp = wp
-crop_idx = int(np.searchsorted(ts, task_start_ts))
+if task_start_ts is None:
+    print("WARNING: no wp 0→1 transition found; using full track without crop.")
+    crop_idx = 0
+else:
+    crop_idx = int(np.searchsorted(ts, task_start_ts))
 xs, ys, hdops, ts = xs[crop_idx:], ys[crop_idx:], hdops[crop_idx:], ts[crop_idx:]
 
 # --- load planned path and align to task start ---
