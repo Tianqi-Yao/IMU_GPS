@@ -353,6 +353,7 @@ class MJPEGServer:
         self._port = port
         self._quality = quality
         self._latest_jpeg: bytes = b""
+        self._frame_id: int = 0
         self._frame_lock = threading.Lock()
         self._running = False
         self._capture_thread: threading.Thread | None = None
@@ -407,20 +408,23 @@ class MJPEGServer:
                 self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
                 try:
+                    last_sent_id = -1
                     while server_ref._running:
                         with server_ref._frame_lock:
+                            current_id = server_ref._frame_id
                             jpeg = server_ref._latest_jpeg
-                        if not jpeg:
-                            time.sleep(0.01)
+                        if not jpeg or current_id == last_sent_id:
+                            time.sleep(0.005)
                             continue
+                        last_sent_id = current_id
                         try:
                             self.wfile.write(b"--frame\r\n")
                             self.wfile.write(b"Content-Type: image/jpeg\r\n\r\n")
                             self.wfile.write(jpeg)
                             self.wfile.write(b"\r\n")
+                            self.wfile.flush()
                         except (BrokenPipeError, ConnectionResetError):
                             break
-                        time.sleep(0.01)
                 except Exception:
                     pass
                 finally:
@@ -505,6 +509,7 @@ class MJPEGServer:
                     if ok:
                         with self._frame_lock:
                             self._latest_jpeg = buf.tobytes()
+                            self._frame_id += 1
                     self._tick_fps()
                 else:
                     time.sleep(0.003)  # no new frame — avoid busy spin
