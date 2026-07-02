@@ -487,16 +487,52 @@ function interpolatePath(points, stepMeters = 0.5) {
 
 function computeOffsetWaypoints(wps, offsetM) {
   const MLAT = 111320.0;
+  const MAX_MITER = 5.0; // cap at 5× to prevent runaway on near-180° hairpins
+
   return wps.map((w, i) => {
-    const prev = wps[Math.max(0, i - 1)];
-    const next = wps[Math.min(wps.length - 1, i + 1)];
     const cosLat = Math.cos(w.lat * Math.PI / 180);
-    const tx = (next.lon - prev.lon) * MLAT * cosLat;
-    const ty = (next.lat - prev.lat) * MLAT;
-    const len = Math.sqrt(tx * tx + ty * ty);
-    if (len < 1e-9) return { ...w, reached: false, reached_at: null };
-    const perpEast  = -ty / len * offsetM;
-    const perpNorth =  tx / len * offsetM;
+
+    // Left normal (CCW 90°) of segment a→b, in ENU meters, unit length
+    function segNormal(a, b) {
+      const dx = (b.lon - a.lon) * MLAT * cosLat;
+      const dy = (b.lat - a.lat) * MLAT;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1e-9) return null;
+      return { x: -dy / len, y: dx / len };
+    }
+
+    const n1 = i > 0              ? segNormal(wps[i - 1], w)  : null;
+    const n2 = i < wps.length - 1 ? segNormal(w, wps[i + 1]) : null;
+
+    let perpEast, perpNorth;
+
+    if (!n1 && !n2) {
+      return { ...w, reached: false, reached_at: null };
+    } else if (!n1 || !n2) {
+      // Endpoint: simple perpendicular to the single adjacent segment
+      const n = n1 || n2;
+      perpEast  = n.x * offsetM;
+      perpNorth = n.y * offsetM;
+    } else {
+      // Interior point: miter bisector so both adjacent offset segments are
+      // exactly parallel (distance = offsetM) to the original segments.
+      const mx = n1.x + n2.x;
+      const my = n1.y + n2.y;
+      const mlen = Math.sqrt(mx * mx + my * my);
+      if (mlen < 1e-9) {
+        // 180° hairpin: normals cancel; keep simple perpendicular from n1
+        perpEast  = n1.x * offsetM;
+        perpNorth = n1.y * offsetM;
+      } else {
+        const ux = mx / mlen;
+        const uy = my / mlen;
+        const dot = ux * n1.x + uy * n1.y; // cos(half_angle)
+        const scale = dot < 1 / MAX_MITER ? MAX_MITER * offsetM : offsetM / dot;
+        perpEast  = ux * scale;
+        perpNorth = uy * scale;
+      }
+    }
+
     return {
       ...w,
       lat: w.lat + perpNorth / MLAT,
