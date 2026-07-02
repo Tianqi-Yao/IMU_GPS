@@ -14,6 +14,13 @@ import cv2
 
 from . import FrameProcessor, register_processor
 
+try:
+    import config as _cfg
+    _DEFAULT_H = _cfg.CAM_HEIGHT
+    _DEFAULT_W = _cfg.CAM_WIDTH
+except ImportError:
+    _DEFAULT_H, _DEFAULT_W = 400, 640
+
 
 @register_processor
 class DisparityDemoProcessor(FrameProcessor):
@@ -34,7 +41,7 @@ class DisparityDemoProcessor(FrameProcessor):
         disp = frames.get("disparity")
         if disp is None:
             # No stereo stream — return a black frame with a hint
-            blank = np.zeros((480, 640, 3), dtype=np.uint8)
+            blank = np.zeros((_DEFAULT_H, _DEFAULT_W, 3), dtype=np.uint8)
             cv2.putText(blank, "Please set CAM_ENABLE_DISPARITY = True in config.py",
                         (20, 240), cv2.FONT_HERSHEY_SIMPLEX,
                         0.7, (0, 60, 255), 2, cv2.LINE_AA)
