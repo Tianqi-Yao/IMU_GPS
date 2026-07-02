@@ -126,9 +126,6 @@ class Recorder:
 
 _last_odom:    dict  = {}
 _odom_lock           = threading.Lock()
-_vel_lock            = threading.Lock()
-_last_linear:  float = 0.0
-_last_angular: float = 0.0
 
 # ══════════════════════════════════════════════════════════════════════════════
 # BLOCK 2 — I/O ADAPTERS
@@ -308,10 +305,6 @@ class RobotWebSocketServer:
             except serial.SerialException as exc:
                 logger.error("Serial: write error: %s", exc)
                 self._serial_ok = False
-                return
-        with _vel_lock:
-            _last_linear  = linear
-            _last_angular = angular
 
     def _send_raw(self, data: bytes) -> None:
         with self._ser_lock:
