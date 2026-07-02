@@ -466,14 +466,14 @@ class RobotWebSocketServer:
                     await loop.run_in_executor(None, self._send_hbridge, cmd)
                 elif msg_type == "set_recording":
                     enabled = msg.get("enabled")
-                    logger.warning("set_recording received: enabled=%s", enabled)
+                    logger.info("set_recording received: enabled=%s", enabled)
                     if enabled:
                         filename = self._recorder.start()
-                        logger.warning("Recording started: %s", filename)
+                        logger.info("Recording started: %s", filename)
                         await self._broadcast({"type": "rec_status", "recording": True, "filename": filename})
                     else:
                         self._recorder.stop()
-                        logger.warning("Recording stopped")
+                        logger.info("Recording stopped")
                         await self._broadcast({"type": "rec_status", "recording": False, "filename": ""})
         except Exception:
             pass

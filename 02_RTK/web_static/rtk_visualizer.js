@@ -583,7 +583,7 @@ function redrawWaypoints(options = {}) {
         const { lat, lng } = e.target.getLatLng();
         waypoints[idx].lat = lat;
         waypoints[idx].lon = lng;
-        redrawInsertHandles();
+        redrawWaypoints({ fitView: false });
       });
       marker.bindPopup(
         `<div style="text-align:center"><b>WP #${idx + 1}</b><br>` +

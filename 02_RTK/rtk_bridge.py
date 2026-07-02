@@ -419,7 +419,7 @@ if __name__ == "__main__":
         ws_port=ws_port,
         hz=hz,
         static_dir=Path(__file__).parent / "web_static",
-        default_lat=DEFAULT_LAT,
-        default_lon=DEFAULT_LON,
+        default_lat=_cfg.RTK_DEFAULT_LAT if _cfg else DEFAULT_LAT,
+        default_lon=_cfg.RTK_DEFAULT_LON if _cfg else DEFAULT_LON,
         open_browser=open_browser,
     ).run()
