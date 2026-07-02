@@ -111,6 +111,7 @@ class HelloMainLoopApp:
             self.hbridge_bits = actuator_bits_cmd(a0=ActuatorCommands.stopped)
         elif cmd == 'P':
             self.hbridge_bits = actuator_bits_cmd(a0=ActuatorCommands.passive)
+        self._last_cmd_ms = supervisor.ticks_ms()
 
     def serial_read(self):
         while console.in_waiting > 0:
@@ -138,6 +139,7 @@ class HelloMainLoopApp:
         if (supervisor.ticks_ms() - self._last_cmd_ms) > self.CMD_TIMEOUT_MS:
             self.cmd_speed = 0.0
             self.cmd_ang_rate = 0.0
+            self.hbridge_bits = actuator_bits_cmd(a0=ActuatorCommands.stopped)
 
         if self.cmd_repeater.check():
             self.can.send(

@@ -196,6 +196,8 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keyup', (e) => {
   if (e.key === 'w' || e.key === 'W' || e.key === 's' || e.key === 'S') stopManual();
 });
+window.addEventListener('blur', stopManual);
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopManual(); });
 
 // ── Heading calibration ───────────────────────────────────
 const calibMarked  = document.getElementById('calib-marked');
