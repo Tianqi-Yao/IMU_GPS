@@ -91,14 +91,20 @@ def _load_default_waypoints(path: Path) -> list[dict]:
     with open(path, newline="", encoding="utf-8") as f:
         sample = f.read(4096)
         f.seek(0)
-        dialect = csv.Sniffer().sniff(sample, delimiters="\t,")
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters="\t,")
+        except csv.Error:
+            dialect = csv.excel
         for row in csv.DictReader(f, dialect=dialect):
-            waypoints.append({
-                "lat":  float(row["lat"]),
-                "lon":  float(row["lon"]),
-                "type": str(row.get("type", "") or "").strip(),
-                "lift": str(row.get("lift", "") or "").strip().lower(),
-            })
+            try:
+                waypoints.append({
+                    "lat":  float(row["lat"]),
+                    "lon":  float(row["lon"]),
+                    "type": str(row.get("type", "") or "").strip(),
+                    "lift": str(row.get("lift", "") or "").strip().lower(),
+                })
+            except (ValueError, KeyError) as exc:
+                logger.warning("Skipping malformed row in %s: %s — %s", path, dict(row), exc)
     logger.info("Loaded %d waypoints from %s", len(waypoints), path)
     return waypoints
 
@@ -905,6 +911,9 @@ class AutoNavBridge:
             waypoints = _load_default_waypoints(PATH_FILE)
         except FileNotFoundError:
             logger.warning("path.csv not found — starting with no waypoints. Use LOAD CSV in the UI.")
+            waypoints = []
+        except Exception as exc:
+            logger.warning("Failed to load path.csv (%s) — starting with no waypoints.", exc)
             waypoints = []
         if not waypoints:
             logger.warning("No waypoints loaded from %s — use LOAD CSV in the UI to load a path.", PATH_FILE)

@@ -193,6 +193,7 @@ let trackPoints = [];
 let trackSegments = [];
 let logs = [];
 let isEditMode = false;
+let insertHandles = [];
 let simPath = [];
 let simTimer = null;
 let hasFirstFix = false;
@@ -336,6 +337,61 @@ function syncDualRtkMap(frame, sourceFrames) {
     iconAnchor: [18, 6],
   });
   headingArrowMarker = L.marker([bLat, bLon], { icon, interactive: false }).addTo(map);
+}
+
+function makeWpIcon(state = 'normal', editMode = false) {
+  const C = {
+    normal:  { bg: '#cbd5e0', bd: '#4a5568' },
+    active:  { bg: '#f6ad55', bd: '#b57812' },
+    reached: { bg: '#6ee7b7', bd: '#1f8f46' },
+  };
+  const { bg, bd } = C[state] || C.normal;
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:12px;height:12px;border-radius:50%;background:${bg};border:2px solid ${bd};box-sizing:border-box;${editMode ? 'cursor:grab' : ''}"></div>`,
+    iconSize: [12, 12], iconAnchor: [6, 6],
+    tooltipAnchor: [6, 0], popupAnchor: [0, -6],
+  });
+}
+
+function deleteWaypoint(idx) {
+  if (idx < 0 || idx >= waypoints.length) return;
+  const removed = waypoints.splice(idx, 1)[0];
+  map.closePopup();
+  redrawWaypoints({ fitView: false });
+  addEvent(`Removed WP #${idx + 1} (id:${removed.id})`, '#6b7280');
+}
+
+function insertWaypointAt(idx, lat, lon) {
+  const { tolerance, maxSpeed } = getEditParams();
+  waypoints.splice(idx, 0, {
+    id: `${idx}`,
+    lat,
+    lon,
+    tolerance_m: tolerance,
+    max_speed: maxSpeed,
+    reached: false,
+    reached_at: null,
+  });
+  redrawWaypoints({ fitView: false });
+}
+
+function redrawInsertHandles() {
+  insertHandles.forEach((h) => h.remove());
+  insertHandles = [];
+  if (!isEditMode || waypoints.length < 2) return;
+  for (let i = 0; i < waypoints.length - 1; i += 1) {
+    const midLat = (waypoints[i].lat + waypoints[i + 1].lat) / 2;
+    const midLon = (waypoints[i].lon + waypoints[i + 1].lon) / 2;
+    const h = L.circleMarker([midLat, midLon], {
+      radius: 5, color: '#718096', weight: 1.5,
+      fillColor: '#fff', fillOpacity: 0.9, opacity: 0.85,
+    }).addTo(map);
+    h.bindTooltip(`Insert between #${i + 1} and #${i + 2}`);
+    const ci = i;
+    h.on('click', (e) => { L.DomEvent.stop(e); insertWaypointAt(ci + 1, midLat, midLon); });
+    insertHandles.push(h);
+  }
 }
 
 function waypointTooltipHtml(wp, idx) {
@@ -506,15 +562,33 @@ function redrawWaypoints(options = {}) {
   }).addTo(map);
 
   waypoints.forEach((w, idx) => {
-    const m = L.circleMarker([w.lat, w.lon], {
-      radius: 6,
-      color: '#4a5568',
-      weight: 2,
-      fillColor: '#cbd5e0',
-      fillOpacity: 0.9,
+    const marker = L.marker([w.lat, w.lon], {
+      icon: makeWpIcon('normal', isEditMode),
+      draggable: isEditMode,
     }).addTo(map);
-    m.bindTooltip(waypointTooltipHtml(w, idx), { permanent: false });
-    waypointMarkers[idx] = m;
+    marker.bindTooltip(waypointTooltipHtml(w, idx), { permanent: false });
+
+    if (isEditMode) {
+      marker.on('drag', (e) => {
+        if (!plannedPath) return;
+        const ll = plannedPath.getLatLngs();
+        ll[idx] = e.target.getLatLng();
+        plannedPath.setLatLngs(ll);
+      });
+      marker.on('dragend', (e) => {
+        const { lat, lng } = e.target.getLatLng();
+        waypoints[idx].lat = lat;
+        waypoints[idx].lon = lng;
+        redrawInsertHandles();
+      });
+      marker.bindPopup(
+        `<div style="text-align:center"><b>WP #${idx + 1}</b><br>` +
+        `<button onclick="deleteWaypoint(${idx})" ` +
+        `style="margin-top:6px;padding:4px 12px;background:#e53e3e;color:#fff;` +
+        `border:none;border-radius:4px;cursor:pointer">Delete</button></div>`
+      );
+    }
+    waypointMarkers[idx] = marker;
   });
 
   simPath = interpolatePath(waypoints.map((w) => [w.lat, w.lon]), 0.4);
@@ -524,6 +598,7 @@ function redrawWaypoints(options = {}) {
     map.fitBounds(bounds.pad(0.2));
   }
   updateUndoButtonState();
+  redrawInsertHandles();
 }
 
 function findCurrentTarget() {
@@ -536,16 +611,10 @@ function findCurrentTarget() {
 function updateWaypointStyles(activeIdx) {
   waypointMarkers.forEach((m, idx) => {
     const wp = waypoints[idx];
-    let color = '#4a5568';
-    let fill = '#cbd5e0';
-    if (wp.reached) {
-      color = '#1f8f46';
-      fill = '#6ee7b7';
-    } else if (idx === activeIdx) {
-      color = '#b57812';
-      fill = '#f6ad55';
-    }
-    m.setStyle({ color, fillColor: fill });
+    let state = 'normal';
+    if (wp.reached) state = 'reached';
+    else if (idx === activeIdx) state = 'active';
+    m.setIcon(makeWpIcon(state, isEditMode));
     m.setTooltipContent(waypointTooltipHtml(wp, idx));
   });
 }
@@ -856,6 +925,10 @@ function undoLastWaypoint() {
 
 function toggleEditRoute() {
   isEditMode = !isEditMode;
+  if (!isEditMode) {
+    insertHandles.forEach((h) => h.remove());
+    insertHandles = [];
+  }
   setEditOptionsVisible(isEditMode);
   btnEditRoute.textContent = isEditMode ? t('doneEdit') : t('editRoute');
   btnEditRoute.classList.toggle('active', isEditMode);
