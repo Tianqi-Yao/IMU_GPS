@@ -152,6 +152,11 @@ const editTolerance = document.getElementById('editTolerance');
 const editMaxSpeed = document.getElementById('editMaxSpeed');
 const btnStartSim = document.getElementById('btnStartSim');
 const btnExportRoute = document.getElementById('btnExportRoute');
+const offsetDist      = document.getElementById('offsetDist');
+const btnOffsetLeft   = document.getElementById('btnOffsetLeft');
+const btnOffsetRight  = document.getElementById('btnOffsetRight');
+const btnExportOffset = document.getElementById('btnExportOffset');
+const btnClearOffset  = document.getElementById('btnClearOffset');
 const btnClearTrack = document.getElementById('btnClearTrack');
 const btnExportLog = document.getElementById('btnExportLog');
 const cardCurrentTitle = document.getElementById('cardCurrentTitle');
@@ -198,6 +203,8 @@ let simPath = [];
 let simTimer = null;
 let hasFirstFix = false;
 let connectionState = 'disconnected';
+let offsetWaypoints = [];
+let offsetPath = null;
 
 function sourceColor(sourceId, index = 0) {
   const seed = Array.from(sourceId || '').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
@@ -478,6 +485,73 @@ function interpolatePath(points, stepMeters = 0.5) {
   return result;
 }
 
+function computeOffsetWaypoints(wps, offsetM) {
+  const MLAT = 111320.0;
+  return wps.map((w, i) => {
+    const prev = wps[Math.max(0, i - 1)];
+    const next = wps[Math.min(wps.length - 1, i + 1)];
+    const cosLat = Math.cos(w.lat * Math.PI / 180);
+    const tx = (next.lon - prev.lon) * MLAT * cosLat;
+    const ty = (next.lat - prev.lat) * MLAT;
+    const len = Math.sqrt(tx * tx + ty * ty);
+    if (len < 1e-9) return { ...w, reached: false, reached_at: null };
+    const perpEast  = -ty / len * offsetM;
+    const perpNorth =  tx / len * offsetM;
+    return {
+      ...w,
+      lat: w.lat + perpNorth / MLAT,
+      lon: w.lon + perpEast / (MLAT * cosLat),
+      reached: false,
+      reached_at: null,
+    };
+  });
+}
+
+function clearOffsetPath() {
+  if (offsetPath) { offsetPath.remove(); offsetPath = null; }
+  offsetWaypoints = [];
+  if (btnExportOffset) btnExportOffset.disabled = true;
+  if (btnClearOffset)  btnClearOffset.disabled  = true;
+}
+
+function applyOffset(offsetM) {
+  if (!waypoints.length) {
+    addEvent('No route loaded to offset', '#c23a27');
+    return;
+  }
+  clearOffsetPath();
+  offsetWaypoints = computeOffsetWaypoints(waypoints, offsetM);
+  offsetPath = L.polyline(
+    offsetWaypoints.map((w) => [w.lat, w.lon]),
+    { color: '#d97706', weight: 2.5, opacity: 0.9, dashArray: '5, 4' },
+  ).addTo(map);
+  if (btnExportOffset) btnExportOffset.disabled = false;
+  if (btnClearOffset)  btnClearOffset.disabled  = false;
+  const dir = offsetM > 0 ? 'left' : 'right';
+  addEvent(`Offset path: ${dir} ${Math.abs(offsetM).toFixed(1)} m, ${offsetWaypoints.length} pts`, '#d97706');
+}
+
+function exportOffsetCsv() {
+  if (!offsetWaypoints.length) return;
+  const header = ['id', 'lat', 'lon', 'tolerance_m', 'max_speed'];
+  const rows = offsetWaypoints.map((w, idx) => [
+    w.id ?? `${idx}`,
+    Number(w.lat).toFixed(8),
+    Number(w.lon).toFixed(8),
+    w.tolerance_m ?? 0.5,
+    w.max_speed ?? '',
+  ]);
+  const csv = [header, ...rows].map((line) => line.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `route_offset_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  addEvent(`Offset route exported: ${offsetWaypoints.length} pts`, '#1f8f46');
+}
+
 function parseCsvRows(text) {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return [];
@@ -543,6 +617,7 @@ function redrawWaypoints(options = {}) {
   const { fitView = true } = options;
   waypointMarkers.forEach((m) => m.remove());
   waypointMarkers = [];
+  clearOffsetPath();
 
   if (plannedPath) {
     plannedPath.remove();
@@ -1006,6 +1081,16 @@ btnEditRoute.addEventListener('click', toggleEditRoute);
 btnUndoNode.addEventListener('click', undoLastWaypoint);
 btnStartSim.addEventListener('click', startSimulation);
 btnExportRoute.addEventListener('click', exportRouteCsv);
+btnOffsetLeft.addEventListener('click', () => {
+  const d = Math.abs(Number(offsetDist?.value) || 1.0);
+  applyOffset(d);
+});
+btnOffsetRight.addEventListener('click', () => {
+  const d = Math.abs(Number(offsetDist?.value) || 1.0);
+  applyOffset(-d);
+});
+btnExportOffset.addEventListener('click', exportOffsetCsv);
+btnClearOffset.addEventListener('click', clearOffsetPath);
 btnClearTrack.addEventListener('click', clearTrack);
 btnExportLog.addEventListener('click', exportLogs);
 

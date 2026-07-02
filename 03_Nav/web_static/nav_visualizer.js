@@ -902,7 +902,6 @@ function toggleEditRoute() {
   if (isEditMode) {
     const { tolerance, maxSpeed } = getEditParams();
     stopSimulation();
-    waypoints = [];
     redrawWaypoints();
     addEvent(t('editOn', { tolerance, speed: maxSpeed }), '#b57812');
   } else {
