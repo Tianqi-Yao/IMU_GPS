@@ -383,9 +383,13 @@ function redrawInsertHandles() {
   for (let i = 0; i < waypoints.length - 1; i += 1) {
     const midLat = (waypoints[i].lat + waypoints[i + 1].lat) / 2;
     const midLon = (waypoints[i].lon + waypoints[i + 1].lon) / 2;
-    const h = L.circleMarker([midLat, midLon], {
-      radius: 5, color: '#718096', weight: 1.5,
-      fillColor: '#fff', fillOpacity: 0.9, opacity: 0.85,
+    const h = L.marker([midLat, midLon], {
+      icon: L.divIcon({
+        className: '',
+        html: '<div style="width:16px;height:16px;border-radius:50%;background:#3182ce;border:2px solid #1a5ea8;box-sizing:border-box;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:700;line-height:1;cursor:pointer">+</div>',
+        iconSize: [16, 16], iconAnchor: [8, 8],
+      }),
+      interactive: true,
     }).addTo(map);
     h.bindTooltip(`Insert between #${i + 1} and #${i + 2}`);
     const ci = i;
@@ -936,7 +940,6 @@ function toggleEditRoute() {
   if (isEditMode) {
     const { tolerance, maxSpeed } = getEditParams();
     stopSimulation();
-    waypoints = [];
     redrawWaypoints();
     addEvent(t('editOn', { tolerance, speed: maxSpeed }), '#b57812');
   } else {
