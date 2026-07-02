@@ -1098,6 +1098,7 @@ function centerToCurrent() {
 csvFile.addEventListener('change', async (ev) => {
   const file = ev.target.files?.[0];
   if (!file) return;
+  ev.target.value = '';  // allow re-selecting the same file
 
   try {
     const text = await file.text();

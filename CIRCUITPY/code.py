@@ -95,10 +95,9 @@ class HelloMainLoopApp:
             if len(parts) == 2:
                 self.cmd_speed    = max(-1.0, min(1.0, float(parts[0])))
                 self.cmd_ang_rate = max(-1.0, min(1.0, float(parts[1])))
+                self._last_cmd_ms = supervisor.ticks_ms()
         except (ValueError, IndexError):
             pass  # ignore malformed command
-        else:
-            self._last_cmd_ms = supervisor.ticks_ms()
 
     def parse_hbridge_cmd(self, line):
         """Parse 'H{U|D|S|P}\\n': U=up/forward, D=down/reverse, S=stop, P=passive."""
