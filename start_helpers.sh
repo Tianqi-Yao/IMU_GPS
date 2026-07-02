@@ -32,9 +32,6 @@ A  06_Camera listen
 B  06_Camera replay
 C  03_Nav   bridge
 D  03_Nav   full replay stack (2+4+C+5)
-E  09_PathFollow bridge
-F  09_PathFollow listen
-
 X  Stop helpers session
 Q  Quit
 
@@ -60,8 +57,6 @@ cmd_for_key() {
     A) echo "cd '$ROOT/06_Camera' && python listen_camera_websocket.py" ;;
     B) echo "cd '$ROOT/06_Camera' && python replay_camera_websocket.py" ;;
     C) echo "cd '$ROOT/03_Nav' && python nav_bridge.py" ;;
-    E) echo "cd '$ROOT/09_PathFollow' && python path_follow_bridge.py" ;;
-    F) echo "cd '$ROOT/09_PathFollow' && python listen_path_follow_websocket.py" ;;
     *) echo "" ;;
   esac
 }

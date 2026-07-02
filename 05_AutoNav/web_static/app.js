@@ -159,8 +159,9 @@ function handleNavStatus(msg) {
   // Output JSON panels (throttled)
   if (now - lastUpdate.status >= JSON_THROTTLE_MS) {
     lastUpdate.status = now;
+    const _HIDE = new Set(['imu_raw', 'rtk_raw', 'path_original', 'path_offset']);
     const statusDisplay = Object.fromEntries(
-      Object.entries(msg).filter(([k]) => k !== 'imu_raw' && k !== 'rtk_raw')
+      Object.entries(msg).filter(([k]) => !_HIDE.has(k))
     );
     jsonStatus.textContent = JSON.stringify(statusDisplay, null, 2);
     jsonCmd.textContent = JSON.stringify({
