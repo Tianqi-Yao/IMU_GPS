@@ -498,15 +498,17 @@ class MJPEGServer:
             if output is not None:
                 with self._output_lock:
                     self._latest_output_frame = output
-                ok, buf = cv2.imencode(
-                    ".jpg", output,
-                    [cv2.IMWRITE_JPEG_QUALITY, self._quality],
-                )
-                if ok:
-                    with self._frame_lock:
-                        self._latest_jpeg = buf.tobytes()
                 if has_new_frame:
+                    ok, buf = cv2.imencode(
+                        ".jpg", output,
+                        [cv2.IMWRITE_JPEG_QUALITY, self._quality],
+                    )
+                    if ok:
+                        with self._frame_lock:
+                            self._latest_jpeg = buf.tobytes()
                     self._tick_fps()
+                else:
+                    time.sleep(0.003)  # no new frame — avoid busy spin
             else:
                 time.sleep(0.005)
 

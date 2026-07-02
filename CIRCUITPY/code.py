@@ -118,7 +118,9 @@ class HelloMainLoopApp:
             # V/H commands (multi-byte line protocol)
             if char in ('V', 'H') or self._line_buf:
                 self._line_buf.append(char)
-                if char == '\n':
+                if len(self._line_buf) > 32:  # guard against runaway buffer
+                    self._line_buf.clear()
+                elif char == '\n':
                     line = ''.join(self._line_buf).strip()
                     self._line_buf.clear()
                     if line.startswith('V'):
