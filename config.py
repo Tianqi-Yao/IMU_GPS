@@ -1,10 +1,15 @@
 """
 config.py — Global hyperparameter configuration
 
-All default parameters for modules 01~06 are defined here.
+All default parameters for modules 00~06 are defined here.
 CLI arguments can still override these values at runtime.
 Edit this file and restart the relevant module to apply changes.
 """
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 00_QR  — LAN QR code launcher page
+# ══════════════════════════════════════════════════════════════════════════════
+QR_PORT = 8700   # HTTP port for the QR launcher page
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 01_IMU  — BNO085 serial → WebSocket bridge

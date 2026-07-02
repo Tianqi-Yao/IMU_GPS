@@ -25,6 +25,7 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
     exit 0
 fi
 
+start_window "00_QR"    "cd '$ROOT/00_QR'    && python qr_server.py"
 start_window "01_IMU" "cd '$ROOT/01_IMU' && python imu_bridge.py"
 start_window "02_RTK" "cd '$ROOT/02_RTK' && python rtk_bridge.py"
 start_window "03_Nav" "cd '$ROOT/03_Nav' && python nav_bridge.py"
