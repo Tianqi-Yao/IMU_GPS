@@ -13,6 +13,8 @@ Usage:
 import io
 import socket
 import socketserver
+import threading
+import webbrowser
 from http.server import BaseHTTPRequestHandler
 
 import qrcode
@@ -128,5 +130,7 @@ if __name__ == "__main__":
 
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", QR_PORT), _Handler) as httpd:
-        print(f"QR Launcher: http://{ip}:{QR_PORT}")
+        url = f"http://{ip}:{QR_PORT}"
+        print(f"QR Launcher: {url}")
+        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
         httpd.serve_forever()
