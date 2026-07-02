@@ -29,10 +29,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import rootutils
 import websockets
 
 # ── Load config (fallback to defaults if running standalone) ─────────────────
-sys.path.insert(0, str(Path(__file__).parent))
+ROOT = rootutils.setup_root(__file__, indicator=".git", pythonpath=True)
 try:
     import config as _cfg
 except ImportError:
@@ -42,7 +43,6 @@ def _c(attr, default):
     return getattr(_cfg, attr, default) if _cfg else default
 
 # ── Stream endpoints ──────────────────────────────────────────────────────────
-PROJECT_ROOT = Path(__file__).parent
 
 WS_STREAMS = [
     ("imu",           f"ws://localhost:{_c('IMU_WS_PORT',     8765) + 1}"),
@@ -151,7 +151,7 @@ def _fmt_size(path: Path) -> str:
 
 async def main() -> None:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    session_dir = PROJECT_ROOT / "data_log" / f"session_{ts}"
+    session_dir = ROOT / "data_log" / f"session_{ts}"
     session_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nrecord_all — session: {session_dir}\n")

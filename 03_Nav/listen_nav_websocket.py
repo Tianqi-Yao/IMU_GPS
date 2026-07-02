@@ -30,7 +30,7 @@ async def listen_nav(ws_url: str):
     print(f"Connecting to {ws_url}...")
     
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_log_path = Path(".") / "data_log" / f"nav_raw_{ts}.jsonl"
+    raw_log_path = Path(__file__).parent / "data_log" / f"nav_raw_{ts}.jsonl"
     raw_log_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Raw log file: {raw_log_path}")
 

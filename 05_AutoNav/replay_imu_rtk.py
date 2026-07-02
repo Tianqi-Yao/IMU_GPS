@@ -23,13 +23,15 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+import rootutils
 
 import websockets
 
 # ── Configuration ─────────────────────────────────────────────────────────────
+ROOT = rootutils.find_root(__file__, indicator=".git")
 
-IMU_JSONL   = Path(__file__).parent.parent / "01_IMU" / "data_log" / "imu_raw_v1.jsonl"
-RTK_JSONL   = Path(__file__).parent.parent / "02_RTK" / "data_log" / "rtk_raw_v1.jsonl"
+IMU_JSONL   = ROOT / "01_IMU" / "data_log" / "imu_raw_v1.jsonl"
+RTK_JSONL   = ROOT / "02_RTK" / "data_log" / "rtk_raw_v1.jsonl"
 
 IMU_HOST    = "0.0.0.0"
 IMU_PORT    = 8766

@@ -20,7 +20,7 @@ async def listen_camera(ws_url: str) -> None:
     print(f"Connecting to {ws_url}...")
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_log_path = Path(".") / "data_log" / f"camera_raw_{ts}.jsonl"
+    raw_log_path = Path(__file__).parent / "data_log" / f"camera_raw_{ts}.jsonl"
     raw_log_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Raw log file: {raw_log_path}")
 

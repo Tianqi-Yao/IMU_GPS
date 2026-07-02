@@ -1,9 +1,8 @@
 import math
-import sys
-from pathlib import Path
+import rootutils
+ROOT = rootutils.setup_root(__file__, indicator=".git", pythonpath=True)
 
 # ── Load config ───────────────────────────────────────────────────────────────
-sys.path.insert(0, str(Path(__file__).parent.parent))
 try:
     import config as _cfg
 except ImportError:
