@@ -424,7 +424,7 @@ class RobotWebSocketServer:
             elapsed = time.time() - self._last_heartbeat
             if elapsed > self._watchdog_timeout:
                 logger.warning("Watchdog: no heartbeat for %.1fs — emergency stop", elapsed)
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._send_velocity, 0.0, 0.0)
                 if self._auto_active:
                     await loop.run_in_executor(None, self._send_raw, b"\r")
@@ -452,18 +452,18 @@ class RobotWebSocketServer:
                     try:
                         lin = max(-self._max_linear,  min(self._max_linear,  float(msg.get("linear",  0.0))))
                         ang = max(-self._max_angular, min(self._max_angular, float(msg.get("angular", 0.0))))
-                        loop = asyncio.get_event_loop()
+                        loop = asyncio.get_running_loop()
                         await loop.run_in_executor(None, self._send_velocity, lin, ang)
                     except (TypeError, ValueError):
                         pass
                 elif msg_type == "toggle_state":
                     self._last_heartbeat = time.time()
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     await loop.run_in_executor(None, self._send_raw, b"\r")
                 elif msg_type == "lift_control":
                     cmd_map = {"up": "U", "down": "D", "stop": "S"}
                     cmd = cmd_map.get(str(msg.get("cmd", "stop")).lower(), "S")
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     await loop.run_in_executor(None, self._send_hbridge, cmd)
                 elif msg_type == "set_recording":
                     enabled = msg.get("enabled")

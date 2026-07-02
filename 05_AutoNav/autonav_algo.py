@@ -57,7 +57,7 @@ def _fast_bearing(lat1, lon1, lat2, lon2) -> float:
 
 def compute(lat, lon, heading_deg, waypoints, wp_idx, dt_s) -> tuple:
     """
-    Returns: (linear m/s, angular rad/s, new_wp_idx, arrived)
+    Returns: (linear m/s, angular rad/s, arrived: bool)
     """
 
     # 如果没有当前坐标或航向信息，无法导航，直接返回零速度。
@@ -109,9 +109,9 @@ def apply_offset_to_waypoints(waypoints: list, offset_m: float) -> list:
     Uses miter join at corners so the offset distance stays consistent.
     Preserves all extra fields (type, lift, etc.).
     """
-    if not waypoints or offset_m == 0.0:
-        return [dict(wp) for wp in waypoints]
     n = len(waypoints)
+    if not waypoints or n < 2 or offset_m == 0.0:
+        return [dict(wp) for wp in waypoints]
 
     def _perp_vec(lat1, lon1, lat2, lon2):
         r = math.radians((_fast_bearing(lat1, lon1, lat2, lon2) + 90) % 360)
