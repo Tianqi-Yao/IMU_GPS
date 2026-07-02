@@ -42,6 +42,8 @@ def _c(attr, default):
     return getattr(_cfg, attr, default) if _cfg else default
 
 # ── Stream endpoints ──────────────────────────────────────────────────────────
+PROJECT_ROOT = Path(__file__).parent
+
 WS_STREAMS = [
     ("imu",           f"ws://localhost:{_c('IMU_WS_PORT',     8765) + 1}"),
     ("rtk",           f"ws://localhost:{_c('RTK_WS_PORT',     8775) + 1}"),
@@ -81,6 +83,7 @@ async def _ws_record(name: str, url: str, out_path: Path,
                             obj["log_recv_ts"] = time.time()
                             f.write(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
                             f.write("\n")
+                            f.flush()
                             count += 1
                         except Exception:
                             pass
@@ -148,7 +151,7 @@ def _fmt_size(path: Path) -> str:
 
 async def main() -> None:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    session_dir = Path("data_log") / f"session_{ts}"
+    session_dir = PROJECT_ROOT / "data_log" / f"session_{ts}"
     session_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nrecord_all — session: {session_dir}\n")
@@ -192,8 +195,12 @@ async def main() -> None:
     async_stop.set()
     thread_stop.set()
 
-    for t in cam_threads:
-        t.join(timeout=5)
+    # Join camera threads without blocking the event loop
+    loop = asyncio.get_event_loop()
+    await asyncio.gather(*[
+        loop.run_in_executor(None, lambda t=t: t.join(timeout=5))
+        for t in cam_threads
+    ])
 
     for task in ws_tasks:
         task.cancel()
