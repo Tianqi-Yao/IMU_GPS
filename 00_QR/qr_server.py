@@ -110,15 +110,18 @@ def build_page(ip: str) -> str:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    _ip: str = ""
+    _page: bytes = b""
 
     def do_GET(self):
-        html = build_page(self._ip).encode("utf-8")
+        if self.path not in ("/", "/index.html"):
+            self.send_response(404)
+            self.end_headers()
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(html)))
+        self.send_header("Content-Length", str(len(self._page)))
         self.end_headers()
-        self.wfile.write(html)
+        self.wfile.write(self._page)
 
     def log_message(self, fmt, *args):
         pass  # suppress per-request logs
@@ -126,7 +129,7 @@ class _Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     ip = get_local_ip()
-    _Handler._ip = ip
+    _Handler._page = build_page(ip).encode("utf-8")  # build once, serve forever
 
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", QR_PORT), _Handler) as httpd:
