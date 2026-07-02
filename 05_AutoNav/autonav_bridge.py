@@ -120,15 +120,18 @@ def _convert_csv_to_waypoints(content: str) -> list[dict]:
             dialect = csv.excel  # fall back to standard comma-separated
         reader = csv.DictReader(content.splitlines(), dialect=dialect)
         for row in reader:
-            waypoints.append({
-                "lat":  float(row["lat"]),
-                "lon":  float(row["lon"]),
-                "type": str(row.get("type", "") or "").strip(),
-                "lift": str(row.get("lift", "") or "").strip().lower(),
-            })
+            try:
+                waypoints.append({
+                    "lat":  float(row["lat"]),
+                    "lon":  float(row["lon"]),
+                    "type": str(row.get("type", "") or "").strip(),
+                    "lift": str(row.get("lift", "") or "").strip().lower(),
+                })
+            except (ValueError, KeyError) as exc:
+                logger.warning("Skipping malformed row in uploaded CSV: %s — %s", dict(row), exc)
         logger.info("Parsed %d waypoints from uploaded CSV", len(waypoints))
     except Exception as exc:
-        logger.warning("_parse_csv_content: failed to parse CSV: %s", exc)
+        logger.warning("_convert_csv_to_waypoints: failed to parse CSV: %s", exc)
     return waypoints
 
 
