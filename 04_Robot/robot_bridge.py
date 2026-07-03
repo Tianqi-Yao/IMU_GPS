@@ -295,7 +295,6 @@ class RobotWebSocketServer:
                 logger.info("Serial: closed")
 
     def _send_velocity(self, linear: float, angular: float) -> None:
-        global _last_linear, _last_angular
         cmd = f"V{linear:.2f},{angular:.2f}\n".encode()
         with self._ser_lock:
             if self._ser is None or not self._ser.is_open:
