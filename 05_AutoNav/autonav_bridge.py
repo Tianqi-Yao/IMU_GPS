@@ -699,6 +699,8 @@ class AutoNavLoop:
         logger.info("Navigation started (%d waypoints)", len(self._waypoints))
 
     async def cmd_stop(self) -> None:
+        if self._state == "lifting":
+            await self._robot.send_lift("stop")
         self.reset()
         self._state = "idle"
         self._manual_linear = 0.0
