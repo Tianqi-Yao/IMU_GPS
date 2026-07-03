@@ -667,11 +667,6 @@ class AutoNavLoop:
         self._lift_up_s: float = LIFT_UP_DURATION_S
         self._lift_down_s: float = LIFT_DOWN_DURATION_S
 
-        # ── Stop blocking mechanism ────────────────────────────────────────────
-        # When stop() is called, _resume_event is cleared, blocking the main loop
-        # Resume or start will set it, unblocking the loop
-        self._resume_event: asyncio.Event = asyncio.Event()
-        self._resume_event.set()  # Initially unblocked
 
     # --------------------- Algorithm control helpers ---------------------
     def reset(self) -> None:
@@ -701,7 +696,6 @@ class AutoNavLoop:
         self._paused_by_timeout = False
         self.reset()
         self._state = "running"
-        self._resume_event.set()  # Unblock main loop if it was stopped
         logger.info("Navigation started (%d waypoints)", len(self._waypoints))
 
     async def cmd_stop(self) -> None:
@@ -709,7 +703,6 @@ class AutoNavLoop:
         self._state = "idle"
         self._manual_linear = 0.0
         await self._robot.send(0.0, 0.0)  # Send stop command immediately
-        self._resume_event.set()  # Keep loop running so idle status is pushed to frontend
         logger.info("Navigation stopped")
 
     def cmd_mark_pos(self) -> str:
@@ -761,7 +754,6 @@ class AutoNavLoop:
         self._original_waypoints = list(waypoints)
         self._waypoints = algo.apply_offset_to_waypoints(waypoints, self._offset_m)
         self._wp_idx = 0
-        self._resume_event.set()  # keep loop running in idle so status keeps streaming
         logger.info("Waypoints replaced: %d loaded (offset=%.2fm)", len(waypoints), self._offset_m)
 
     def _get_wp_window(self, window: int = 7) -> list[dict]:
@@ -790,7 +782,6 @@ class AutoNavLoop:
             self.reset()
             self._state = "running"
             self._paused_by_timeout = False
-            self._resume_event.set()  # Unblock main loop
 
     def cmd_set_speed(self, ratio: float) -> None:
         self._speed_ratio = max(0.0, min(1.0, ratio))
@@ -807,8 +798,6 @@ class AutoNavLoop:
     async def run(self) -> None:
         period = 1.0 / CONTROL_HZ
         while True:
-            await self._resume_event.wait()  # Block until resume/start unblocks
-
             now = time.monotonic()
             dt  = now - self._prev_ts
             self._prev_ts = now
