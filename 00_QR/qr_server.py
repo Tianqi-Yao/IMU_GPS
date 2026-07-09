@@ -1,8 +1,12 @@
 """
 qr_server.py — Serve a LAN QR code launcher page.
 
-Opens http://<LAN_IP>:8700 and shows 6 QR codes for modules 01~06.
-Phone on the same LAN scans a code to open the corresponding page.
+Opens http://<LAN_IP>:8700 and shows a WiFi join QR code (if configured)
+plus 6 module QR codes for 01~06. Phone on the same LAN scans a code to
+join the network or open the corresponding page.
+
+WiFi credentials are set in config.py (WIFI_SSID / WIFI_PASSWORD /
+WIFI_AUTH_TYPE). Leave WIFI_SSID empty to hide the WiFi card.
 
 Dependency: pip install qrcode   (no Pillow required)
 
@@ -10,6 +14,7 @@ Usage:
     python 00_QR/qr_server.py
 """
 
+import html
 import io
 import socket
 import socketserver
@@ -28,6 +33,10 @@ except ImportError:
     _cfg = None
 
 QR_PORT = _cfg.QR_PORT if _cfg else 8700
+
+WIFI_SSID      = _cfg.WIFI_SSID      if _cfg else ""
+WIFI_PASSWORD  = _cfg.WIFI_PASSWORD  if _cfg else ""
+WIFI_AUTH_TYPE = _cfg.WIFI_AUTH_TYPE if _cfg else "WPA"
 
 MODULES = [
     ("01 IMU",      _cfg.IMU_WS_PORT     if _cfg else 8765, "IMU Attitude Monitor"),
@@ -50,6 +59,22 @@ def get_local_ip() -> str:
         s.close()
 
 
+def _wifi_escape(value: str) -> str:
+    # Per the WIFI: QR spec, backslash-escape \ ; , " and :
+    for ch in ("\\", ";", ",", '"', ":"):
+        value = value.replace(ch, "\\" + ch)
+    return value
+
+
+def make_wifi_qr_payload(ssid: str, password: str, auth_type: str) -> str:
+    auth = "nopass" if not password else auth_type
+    payload = f"WIFI:T:{auth};S:{_wifi_escape(ssid)};"
+    if auth != "nopass":
+        payload += f"P:{_wifi_escape(password)};"
+    payload += ";"
+    return payload
+
+
 def make_qr_svg(url: str) -> str:
     factory = qrcode.image.svg.SvgPathImage
     qr = qrcode.QRCode(box_size=5, border=2)
@@ -62,6 +87,18 @@ def make_qr_svg(url: str) -> str:
 
 
 def build_page(ip: str) -> str:
+    wifi_section = ""
+    if WIFI_SSID:
+        wifi_payload = make_wifi_qr_payload(WIFI_SSID, WIFI_PASSWORD, WIFI_AUTH_TYPE)
+        wifi_svg = make_qr_svg(wifi_payload)
+        ssid_display = html.escape(WIFI_SSID)
+        wifi_section = f"""
+    <div class="wifi-card">
+      <div class="mod-name">WiFi</div>
+      <div class="mod-desc">Scan to join <strong>{ssid_display}</strong></div>
+      <div class="qr">{wifi_svg}</div>
+    </div>"""
+
     cards = ""
     for name, port, desc in MODULES:
         url = f"http://{ip}:{port}"
@@ -85,6 +122,10 @@ def build_page(ip: str) -> str:
     header {{background:#1a3a1a;color:#e8f5e8;padding:18px 24px}}
     header h1 {{margin:0;font-size:1.3rem}}
     header p  {{margin:6px 0 0;font-size:0.95rem;opacity:.8}}
+    .wifi-wrap {{padding:24px 24px 0;max-width:900px;margin:0 auto}}
+    .wifi-card {{background:#fff;border-radius:12px;padding:16px;
+            box-shadow:0 2px 8px rgba(0,0,0,.08);text-align:center;
+            border:2px solid #2b6cb0;max-width:220px;margin:0 auto}}
     .grid {{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;
             padding:24px;max-width:900px;margin:0 auto}}
     @media(max-width:680px){{.grid{{grid-template-columns:repeat(2,1fr)}}}}
@@ -104,6 +145,7 @@ def build_page(ip: str) -> str:
     <h1>IMU_GPS Control Panel</h1>
     <p>LAN IP: <strong>{ip}</strong> — scan to open on phone</p>
   </header>
+  <div class="wifi-wrap">{wifi_section}</div>
   <div class="grid">{cards}</div>
 </body>
 </html>"""

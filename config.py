@@ -11,6 +11,12 @@ Edit this file and restart the relevant module to apply changes.
 # ══════════════════════════════════════════════════════════════════════════════
 QR_PORT = 8700   # HTTP port for the QR launcher page
 
+# WiFi QR code (phone scans to auto-join network). Set WIFI_SSID to enable;
+# leave empty to hide the WiFi card on the launcher page.
+WIFI_SSID      = ""      # WiFi network name, e.g. "MyHomeWiFi"
+WIFI_PASSWORD  = ""      # WiFi password (leave "" for WIFI_AUTH_TYPE = "nopass")
+WIFI_AUTH_TYPE = "WPA"   # "WPA" (covers WPA/WPA2/WPA3), "WEP", or "nopass"
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 01_IMU  — BNO085 serial → WebSocket bridge
 # ══════════════════════════════════════════════════════════════════════════════
