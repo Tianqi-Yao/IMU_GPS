@@ -125,6 +125,13 @@ body {
 .state-arrived { color: var(--blue);   border-color: var(--blue);   }
 .state-lifting { color: var(--orange); border-color: var(--orange); box-shadow: 0 0 12px rgba(240,136,62,0.3); }
 
+#state-reason {
+  font-size: 12px;
+  color: var(--yellow);
+  margin-bottom: 8px;
+  margin-top: -4px;
+}
+
 /* ── Waypoint arrival banner ── */
 #wp-arrive-banner {
   display: flex;
@@ -181,8 +188,7 @@ body {
 
 .btn-start       { border-color: var(--green);  color: var(--green); }
 .btn-stop        { border-color: var(--red);    color: var(--red); }
-.btn-pause       { border-color: var(--yellow); color: var(--yellow); }
-.btn-resume      { border-color: var(--blue);   color: var(--blue); }
+.btn-restart     { border-color: var(--orange); color: var(--orange); }
 .btn-pause-mode  { border-color: var(--dim);    color: var(--dim); }
 
 /* ── Manual drive ── */

@@ -319,6 +319,7 @@ def _build_autonav_status(loop: "AutoNavLoop", heading: float | None,
         "gps_packet_age_s":   round(gps_packet_age, 2),
         "gps_fix_quality":    int(rtk_raw.get("fix_quality", 0) or 0),
         "sensor_block_reason": loop._sensor_block_reason,
+        "robot_connected":    loop._robot.connected,
         "imu_age_s":          round(imu_age, 2),
         "speed_ratio":        loop._speed_ratio,
         "manual_speed":       MANUAL_SPEED,
@@ -469,6 +470,10 @@ class RobotWsClient:
         self._url = url
         self._ws = None           # live WS reference; None when disconnected
         self._last_sent_ts: float = 0.0
+
+    @property
+    def connected(self) -> bool:
+        return self._ws is not None
 
     async def send_lift(self, cmd: str) -> None:
         if self._ws is None:
@@ -692,11 +697,28 @@ class AutoNavLoop:
         if not self._waypoints:
             logger.warning("start: no waypoints loaded")
             return
+        # Resume from the current waypoint (breakpoint continue) unless the
+        # previous run already completed or the index fell out of range.
+        if self._state == "arrived" or self._wp_idx >= len(self._waypoints):
+            self._wp_idx = 0
+        self._paused_by_timeout = False
+        self.reset()
+        self._state = "running"
+        logger.info("Navigation started at waypoint %d/%d", self._wp_idx, len(self._waypoints))
+
+    def cmd_restart(self) -> None:
+        """Force navigation back to waypoint 0, discarding current progress."""
+        if not self._waypoints:
+            logger.warning("restart: no waypoints loaded")
+            return
+        if self._state not in ("idle", "paused", "arrived"):
+            logger.warning("restart: ignored while state=%s", self._state)
+            return
         self._wp_idx = 0
         self._paused_by_timeout = False
         self.reset()
         self._state = "running"
-        logger.info("Navigation started (%d waypoints)", len(self._waypoints))
+        logger.info("Navigation restarted from waypoint 0 (%d waypoints)", len(self._waypoints))
 
     async def cmd_stop(self) -> None:
         if self._state == "lifting":
@@ -800,83 +822,90 @@ class AutoNavLoop:
     async def run(self) -> None:
         period = 1.0 / CONTROL_HZ
         while True:
-            now = time.monotonic()
-            dt  = now - self._prev_ts
-            self._prev_ts = now
-
-            imu_raw = self._imu.latest
-            rtk_raw = self._rtk.latest
-            heading = _extract_imu_heading(imu_raw)
-            lat, lon, fix_quality = _extract_rtk_sample(rtk_raw)
-            imu_age, gps_age, gps_packet_age = _sensor_ages(now, self._imu, self._rtk)
-            sensors_ok = _sensors_ok(heading, lat, lon, fix_quality, gps_age, gps_packet_age, imu_age)
-
-            linear, angular = 0.0, 0.0
-
-            if self._state == "running" and not sensors_ok:
-                self._state = "paused"
-                self._paused_by_timeout = True
-                self._sensor_block_reason = _sensor_block_reason(fix_quality, gps_age, gps_packet_age, imu_age)
-                logger.warning(
-                    "Sensor timeout — reason=%s GPS age=%.1fs packet age=%.1fs IMU age=%.1fs",
-                    self._sensor_block_reason, gps_age, gps_packet_age, imu_age,
-                )
-
-            if self._state == "paused" and self._paused_by_timeout and sensors_ok:
-                self._arrive_counter = 0
-                self._confirm_advance = False
-                self._state = "running"
-                self._paused_by_timeout = False
-                self._sensor_block_reason = None
-                logger.info("Sensors recovered — auto-resuming")
-
-            waypoint_advanced = False
-            if self._state == "running" and sensors_ok:
-                linear, angular, arrived = algo.compute(
-                    lat=lat, lon=lon, heading_deg=heading,
-                    waypoints=self._waypoints, wp_idx=self._wp_idx, dt_s=dt,
-                )
-                linear, angular, arrived, waypoint_advanced = _apply_waypoint_progress(
-                    self, linear, angular, arrived
-                )
-                if waypoint_advanced:
-                    logger.info("Waypoint %d/%d reached", self._wp_idx, len(self._waypoints))
-            elif self._state == "lifting":
-                linear, angular = 0.0, 0.0
-                if time.monotonic() < self._lift_end_time:
-                    await self._robot.send_lift(self._lift_cmd)
-                else:
-                    await self._robot.send_lift("stop")
-                    self._lift_cmd = ""
-                    self._state = "running"
-                    wp_type = self._waypoints[self._wp_idx].get("type", "")
-                    should_pause = (self._pause_mode == "all") or (wp_type == "pause")
-                    if self._wp_idx >= len(self._waypoints) - 1:
-                        self._state = "arrived"
-                        logger.info("WP %d lift complete, arrived at destination", self._wp_idx)
-                    elif should_pause:
-                        self._waiting_at_wp = True
-                        logger.info("WP %d lift complete, waiting for confirm", self._wp_idx)
-                    else:
-                        self._wp_idx += 1
-                        waypoint_advanced = True
-                        logger.info("WP %d lift complete, advancing to %d", self._wp_idx - 1, self._wp_idx)
-
-            send_linear, send_angular = _scaled_robot_command(
-                self._state, linear, angular, self._manual_linear, self._speed_ratio
-            )
-            await self._robot.send(round(send_linear, 3), round(send_angular, 3))
-
-            status = _build_autonav_status(
-                self, heading, lat, lon, gps_age, gps_packet_age, imu_age,
-                linear, angular, imu_raw, rtk_raw,
-            )
             try:
-                self._queue.put_nowait(json.dumps(status))
-            except asyncio.QueueFull:
-                pass
+                now = time.monotonic()
+                dt  = now - self._prev_ts
+                self._prev_ts = now
 
-            await asyncio.sleep(period)
+                imu_raw = self._imu.latest
+                rtk_raw = self._rtk.latest
+                heading = _extract_imu_heading(imu_raw)
+                lat, lon, fix_quality = _extract_rtk_sample(rtk_raw)
+                imu_age, gps_age, gps_packet_age = _sensor_ages(now, self._imu, self._rtk)
+                sensors_ok = _sensors_ok(heading, lat, lon, fix_quality, gps_age, gps_packet_age, imu_age)
+                robot_ok = self._robot.connected
+
+                linear, angular = 0.0, 0.0
+
+                if self._state == "running" and (not sensors_ok or not robot_ok):
+                    self._state = "paused"
+                    self._paused_by_timeout = True
+                    self._sensor_block_reason = (
+                        _sensor_block_reason(fix_quality, gps_age, gps_packet_age, imu_age)
+                        if not sensors_ok else "robot_disconnected"
+                    )
+                    logger.warning(
+                        "Auto-pause — reason=%s GPS age=%.1fs packet age=%.1fs IMU age=%.1fs robot_connected=%s",
+                        self._sensor_block_reason, gps_age, gps_packet_age, imu_age, robot_ok,
+                    )
+
+                if self._state == "paused" and self._paused_by_timeout and sensors_ok and robot_ok:
+                    self._arrive_counter = 0
+                    self._confirm_advance = False
+                    self._state = "running"
+                    self._paused_by_timeout = False
+                    self._sensor_block_reason = None
+                    logger.info("Sensors/robot link recovered — auto-resuming")
+
+                waypoint_advanced = False
+                if self._state == "running" and sensors_ok:
+                    linear, angular, arrived = algo.compute(
+                        lat=lat, lon=lon, heading_deg=heading,
+                        waypoints=self._waypoints, wp_idx=self._wp_idx, dt_s=dt,
+                    )
+                    linear, angular, arrived, waypoint_advanced = _apply_waypoint_progress(
+                        self, linear, angular, arrived
+                    )
+                    if waypoint_advanced:
+                        logger.info("Waypoint %d/%d reached", self._wp_idx, len(self._waypoints))
+                elif self._state == "lifting":
+                    linear, angular = 0.0, 0.0
+                    if time.monotonic() < self._lift_end_time:
+                        await self._robot.send_lift(self._lift_cmd)
+                    else:
+                        await self._robot.send_lift("stop")
+                        self._lift_cmd = ""
+                        self._state = "running"
+                        wp_type = self._waypoints[self._wp_idx].get("type", "")
+                        should_pause = (self._pause_mode == "all") or (wp_type == "pause")
+                        if self._wp_idx >= len(self._waypoints) - 1:
+                            self._state = "arrived"
+                            logger.info("WP %d lift complete, arrived at destination", self._wp_idx)
+                        elif should_pause:
+                            self._waiting_at_wp = True
+                            logger.info("WP %d lift complete, waiting for confirm", self._wp_idx)
+                        else:
+                            self._wp_idx += 1
+                            waypoint_advanced = True
+                            logger.info("WP %d lift complete, advancing to %d", self._wp_idx - 1, self._wp_idx)
+
+                send_linear, send_angular = _scaled_robot_command(
+                    self._state, linear, angular, self._manual_linear, self._speed_ratio
+                )
+                await self._robot.send(round(send_linear, 3), round(send_angular, 3))
+
+                status = _build_autonav_status(
+                    self, heading, lat, lon, gps_age, gps_packet_age, imu_age,
+                    linear, angular, imu_raw, rtk_raw,
+                )
+                try:
+                    self._queue.put_nowait(json.dumps(status))
+                except asyncio.QueueFull:
+                    pass
+            except Exception:
+                logger.exception("AutoNavLoop.run: unhandled error in control iteration, continuing")
+            finally:
+                await asyncio.sleep(period)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -958,6 +987,7 @@ class AutoNavBridge:
             return
         t = msg.get("type", "")
         if   t == "start":     self._nav_loop.cmd_start()
+        elif t == "restart":   self._nav_loop.cmd_restart()
         elif t == "stop":      await self._nav_loop.cmd_stop()
         elif t == "pause":     await self._nav_loop.cmd_pause()
         elif t == "resume":    self._nav_loop.cmd_resume()

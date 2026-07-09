@@ -11,6 +11,7 @@ const JSON_THROTTLE_MS = 300;
 const statusDot    = document.getElementById('status-dot');
 const statusText   = document.getElementById('status-text');
 const stateBadge   = document.getElementById('state-badge');
+const stateReason  = document.getElementById('state-reason');
 const jsonImu      = document.getElementById('json-imu');
 const jsonRtk      = document.getElementById('json-rtk');
 const jsonCmd      = document.getElementById('json-cmd');
@@ -92,6 +93,16 @@ function handleNavStatus(msg) {
     stateBadge.textContent = `LIFTING ${(msg.lift_cmd || '').toUpperCase()} ${msg.lift_remaining_s}s`;
   } else {
     stateBadge.textContent = state.toUpperCase();
+  }
+
+  // Auto-pause reason (sensor timeout or robot link loss) — was previously
+  // sent by the server but never shown, making auto-pauses look like an
+  // unexplained random stop.
+  if (state === 'paused' && msg.sensor_block_reason) {
+    stateReason.textContent = `paused: ${msg.sensor_block_reason}`;
+    stateReason.style.display = '';
+  } else {
+    stateReason.style.display = 'none';
   }
 
   // Compass needles
@@ -279,10 +290,22 @@ function sendCmd(type, extra = {}) {
   }
 }
 
-document.getElementById('btn-start').addEventListener('click',  () => sendCmd('start'));
-document.getElementById('btn-stop').addEventListener('click',   () => sendCmd('stop'));
-document.getElementById('btn-pause').addEventListener('click',  () => sendCmd('pause'));
-document.getElementById('btn-resume').addEventListener('click', () => sendCmd('resume'));
+document.getElementById('btn-start').addEventListener('click',   () => sendCmd('start'));
+document.getElementById('btn-stop').addEventListener('click',    () => sendCmd('stop'));
+document.getElementById('btn-restart').addEventListener('click', () => sendCmd('restart'));
+
+// Keyboard shortcuts for the main controls — the dashboard display is
+// mounted on the robot, so precise clicking/remote mousing is often not an
+// option. Ignored while typing into a text field, and while any modifier
+// key is held so browser shortcuts still work.
+const NAV_KEY_COMMANDS = { '1': 'start', '2': 'stop', '3': 'restart' };
+document.addEventListener('keydown', (e) => {
+  if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  const cmd = NAV_KEY_COMMANDS[e.key];
+  if (cmd) sendCmd(cmd);
+});
 
 // ── Speed slider ──────────────────────────────────────────────
 const speedSlider = document.getElementById('speed-slider');

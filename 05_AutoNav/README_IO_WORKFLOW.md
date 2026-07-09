@@ -131,28 +131,39 @@ recording:
   "linear": 0.30,
   "angular": -0.05,
   "gps_age_s": 0.12,
-  "imu_age_s": 0.08
+  "imu_age_s": 0.08,
+  "sensor_block_reason": null,
+  "robot_connected": true
 }
 ```
+- `sensor_block_reason`: `null` unless `state == "paused"` by an automatic condition — one of
+  `rtk_fix_quality=<n>`, `rtk_packet_age=<s>s`, `rtk_fix_age=<s>s`, `imu_age=<s>s`,
+  `sensor_unavailable`, or `robot_disconnected`.
+- `robot_connected`: whether the `robot_bridge` (:8889) WebSocket link is currently up. `false`
+  while `sensor_block_reason == "robot_disconnected"`.
 
 ### Control commands → ws://localhost:8806
 ```json
-{"type": "start"}    // idle → running
-{"type": "stop"}     // any  → idle
-{"type": "pause"}    // running → paused
-{"type": "resume"}   // paused → running
+{"type": "start"}    // idle → running (resumes at current_wp_idx unless arrived/out of range)
+{"type": "restart"}  // idle | paused | arrived → running, forces current_wp_idx = 0
+{"type": "stop"}     // any  → idle (current_wp_idx preserved)
+{"type": "pause"}    // running → paused   (kept for scripted/debug clients; no dashboard button)
+{"type": "resume"}   // paused → running   (kept for scripted/debug clients; no dashboard button)
 ```
 
 ## State machine
 
 ```
-idle ──start()──► running ──GPS/IMU timeout──► paused ──resume()──► running
-     ◄──stop()──           ──all WP reached──► arrived
+idle ──start()────────────────► running ──GPS/IMU timeout─────────► paused ──resume()──► running
+     ◄──stop()──                        ──robot link disconnected─►        ──sensors/link recover (auto)──► running
+     ◄──restart() [idle|paused|arrived]  ──all WP reached──────────────────────────────► arrived
+                                         ──waypoint has lift=up/down─► lifting ──duration elapsed──► running | arrived | waiting-for-confirm
 ```
 
-- `paused` by timeout: auto-resumes when sensors recover
-- `paused` by command: requires explicit `resume`
+- `paused` by timeout or robot-link loss: auto-resumes when the condition clears; reason exposed via `sensor_block_reason`
+- `paused` by command (`pause`/`resume`): requires explicit `resume`; only reachable via the WS command, not from the dashboard
 - Entering `paused` or `arrived`: immediately sends linear=0, angular=0
+- `restart()` is a no-op (logged, ignored) while `state == "running"` — stop first, or wait for it to arrive/auto-pause
 
 ## Algorithm
 

@@ -8,8 +8,9 @@ Usage:
     python listen_autonav.py
 
 Control commands (type in terminal, press Enter):
-    start   — begin navigation
-    stop    — stop
+    start   — begin navigation (resumes from current waypoint)
+    stop    — stop, preserves current waypoint index
+    restart — force navigation back to waypoint 0
     pause   — pause
     resume  — resume
 """
@@ -41,16 +42,18 @@ def _fmt_status(d: dict) -> str:
     angular = d.get("angular", 0.0)
     gps_age = d.get("gps_age_s", 0.0)
     imu_age = d.get("imu_age_s", 0.0)
+    block_reason = d.get("sensor_block_reason")
 
     bearing_s = f"{bearing:.1f}°" if bearing is not None else "---"
     heading_s = f"{heading:.1f}°" if heading is not None else "---"
     error_s = f"{error:+.1f}°" if error is not None else "---"
+    reason_s = f"  reason={block_reason}" if block_reason else ""
 
     return (
         f"[{state:8s}] wp={wp:6s}  dist={dist_s:8s}  "
         f"bearing={bearing_s:7s}  heading={heading_s:7s}  err={error_s:7s}  "
         f"cmd=({linear:.2f}, {angular:+.2f})  "
-        f"GPS age={gps_age:.1f}s  IMU age={imu_age:.1f}s"
+        f"GPS age={gps_age:.1f}s  IMU age={imu_age:.1f}s{reason_s}"
     )
 
 
@@ -60,11 +63,11 @@ async def _stdin_reader(ws) -> None:
     while True:
         line = await loop.run_in_executor(None, sys.stdin.readline)
         line = line.strip().lower()
-        if line in ("start", "stop", "pause", "resume"):
+        if line in ("start", "stop", "restart", "pause", "resume"):
             await ws.send(json.dumps({"type": line}))
             print(f"  → sent: {line}")
         elif line:
-            print(f"  unknown command: {line!r}  (start / stop / pause / resume)")
+            print(f"  unknown command: {line!r}  (start / stop / restart / pause / resume)")
 
 
 async def main() -> None:
@@ -74,7 +77,7 @@ async def main() -> None:
 
     print(f"Connecting to {WS_URL} ...")
     print(f"Logging to    {log_path}")
-    print("Commands: start / stop / pause / resume")
+    print("Commands: start / stop / restart / pause / resume")
     print("-" * 90)
 
     async with websockets.connect(WS_URL) as ws:

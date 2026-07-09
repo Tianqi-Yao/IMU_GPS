@@ -25,18 +25,20 @@ python autonav_bridge.py
 
 ## Dashboard 操作
 
-| 按钮 | 效果 |
-|------|------|
-| **START** | 从第 0 个航点开始导航 |
-| **STOP** | 停止导航，回到 idle |
-| **PAUSE** | 原地暂停，保留当前航点索引 |
-| **RESUME** | 从暂停位置继续 |
-| **▲ W / ▼ S** | 手动直行（仅 idle 状态）；按住移动，松开停止 |
-| **LOAD CSV** | 运行时加载新航点文件，导航重置为 idle |
-| **MARK POS** | 记录当前 GPS 位置作为前方校准点 |
-| **CALIBRATE** | 根据标记点计算航向偏移并发送给 `01_IMU` |
+| 按钮 | 快捷键 | 效果 |
+|------|--------|------|
+| **START** | `1` | 开始导航。默认从当前航点继续（断点续跑），仅当上一轮已经跑完（`arrived`）时才从第 0 个航点重新开始。 |
+| **STOP** | `2` | 停止导航，回到 idle。当前航点索引会保留。 |
+| **RESTART** | `3` | 强制回到第 0 个航点重新开始，会丢弃当前进度。仅在 idle/paused/arrived 状态下生效（`running` 时按下无效）。 |
+| **▲ W / ▼ S** | `W` / `S` | 手动直行（仅 idle 状态）；按住移动，松开停止 |
+| **LOAD CSV** | — | 运行时加载新航点文件，导航重置为 idle，航点索引清零 |
+| **MARK POS** | — | 记录当前 GPS 位置作为前方校准点 |
+| **CALIBRATE** | — | 根据标记点计算航向偏移并发送给 `01_IMU` |
 
-键盘快捷键：按住 `W` / `S` 等同于按钮手动驾驶。
+键盘快捷键在页面上有输入框获得焦点时、或按住 Ctrl/Alt/Cmd 等修饰键时不会触发。原来的
+**PAUSE**/**RESUME** 按钮已从 Dashboard 移除——修复 STOP/START 的断点续跑之后，二者在效果上
+几乎重复（都是原地停、原地续）。后端仍保留 `pause`/`resume` 这两个 WS 命令供脚本/调试工具使用
+（见 `listen_autonav.py`）；控制循环内部也仍然会自动进入 `paused` 状态（见下方"安全机制"）。
 
 ## 数据流
 
@@ -183,9 +185,11 @@ python listen_autonav.py
 
 - **传感器超时**：GPS 或 IMU 数据超过 `AUTONAV_GPS_TIMEOUT_S`（默认 5 s）自动暂停，恢复后自动续航。
 - **GPS fix 过滤**：`fix_quality == 0`（无信号/默认坐标）不计入 GPS age，防止虚假"有信号"读数。
+- **机器人链路监控**：`robot_bridge`（:8889）断开时控制循环同样会自动暂停，状态载荷中 `sensor_block_reason = "robot_disconnected"`、`robot_connected: false`——修复前机器人链路掉线时 Dashboard 会一直显示 `running`，机器人却已经停了，且没有任何可见提示。链路恢复后与传感器超时一样会自动续航；Dashboard 状态徽标旁会显示当前暂停原因。
 - **Watchdog 心跳**：每秒向 `robot_bridge` 发送零速指令，防止机器人因通信中断失控。
 - **手动驾驶联锁**：W/S 按钮仅在 `idle` 状态有效，不会覆盖正在运行的导航任务。
 - **M4 指令 Watchdog**：`CIRCUITPY/code.py` 中若 500 ms 内未收到 `V` 指令，自动清零电机速度。确保 Pi–M4 串口或 robot_bridge WS 连接断开时机器人立即停止。
+- **控制循环故障隔离**：主循环每次迭代都包在 `try/except` 里，出现意外错误（例如传感器数据格式异常）只记录日志并跳过，不会导致整个 `autonav_bridge.py` 进程崩溃。
 
 ## WS 客户端设计要点 — 必须消费所有传入消息
 

@@ -25,18 +25,22 @@ A browser tab opens automatically at `http://localhost:8805`.
 
 ## Dashboard Controls
 
-| Button | Effect |
-|--------|--------|
-| **START** | Begin navigation from waypoint 0 |
-| **STOP** | Stop navigation, reset to idle |
-| **PAUSE** | Hold in place, preserve current waypoint index |
-| **RESUME** | Continue from paused position |
-| **▲ W / ▼ S** | Manual straight-line drive (idle mode only); hold to move |
-| **LOAD CSV** | Upload a new waypoint file at runtime; navigation resets to idle |
-| **MARK POS** | Record current GPS position as forward calibration point |
-| **CALIBRATE** | Compute heading offset from marked point and apply to `01_IMU` |
+| Button | Key | Effect |
+|--------|-----|--------|
+| **START** | `1` | Begin navigation. Resumes from the current waypoint (breakpoint continue) unless the previous run already arrived, in which case it starts over from waypoint 0. |
+| **STOP** | `2` | Stop navigation, go to idle. Current waypoint index is preserved. |
+| **RESTART** | `3` | Force navigation back to waypoint 0, discarding progress. Only takes effect when idle/paused/arrived (ignored while `running`). |
+| **▲ W / ▼ S** | `W` / `S` | Manual straight-line drive (idle mode only); hold to move |
+| **LOAD CSV** | — | Upload a new waypoint file at runtime; navigation resets to idle and the waypoint index resets to 0 |
+| **MARK POS** | — | Record current GPS position as forward calibration point |
+| **CALIBRATE** | — | Compute heading offset from marked point and apply to `01_IMU` |
 
-Keyboard shortcuts: hold `W` / `S` for manual drive (same as buttons).
+Keyboard shortcuts are ignored while a text field on the page has focus, and while a modifier key
+(Ctrl/Alt/Cmd) is held. `PAUSE`/`RESUME` were removed as separate buttons — after the STOP/START
+fix above they were functionally redundant (both left the robot in place, resumable). The
+`pause`/`resume` WS control commands still exist server-side for scripted/debug use (see
+`listen_autonav.py`); the control loop also still uses the internal `paused` state automatically
+(see Safety section below).
 
 ## Data Flow
 
@@ -189,10 +193,12 @@ python listen_autonav.py
 
 - **Sensor timeout**: navigation auto-pauses if GPS or IMU data age exceeds `AUTONAV_GPS_TIMEOUT_S` (default 5 s); auto-resumes when sensors recover.
 - **GPS fix filter**: frames with `fix_quality == 0` now pause navigation immediately instead of continuing to consume stale RTK coordinates.
+- **Robot link monitoring**: the control loop also auto-pauses when `robot_bridge` (:8889) is disconnected, with `sensor_block_reason = "robot_disconnected"` and `robot_connected: false` in the status payload — previously a dropped robot link left the dashboard showing `running` with a stationary robot and no visible cause. Auto-resumes once the link reconnects, same as the sensor-timeout path. The dashboard shows the active pause reason next to the state badge.
 - **Robot send watchdog**: each velocity command send is bounded by `AUTONAV_ROBOT_SEND_TIMEOUT_S`; if the WebSocket stalls, the control loop drops the command and reconnects instead of hanging.
 - **Watchdog heartbeat**: zero-velocity command sent to `robot_bridge` every second to prevent runaway on connection loss.
 - **Manual drive interlock**: W/S buttons only work in `idle` state — cannot override an active navigation session.
 - **M4 command watchdog**: `CIRCUITPY/code.py` zeroes motor speed if no `V` command is received within 500 ms. This ensures the robot stops even if the Pi–M4 serial link or the robot_bridge WS connection drops mid-navigation.
+- **Control loop fault isolation**: each control-loop iteration is wrapped in `try/except`; an unexpected error (e.g. a malformed sensor payload) is logged and skipped instead of crashing the whole `autonav_bridge.py` process.
 
 ## WS Client Design Note — Always Drain Incoming Messages
 
