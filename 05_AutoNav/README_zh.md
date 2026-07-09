@@ -11,6 +11,7 @@ Pure Pursuit + PID 路径跟踪模块。读取 IMU 朝向和 RTK 位置，沿航
 ├── path.csv            # 默认航点文件（可通过 UI LOAD CSV 按钮在线替换）
 ├── listen_autonav.py   # 调试工具：打印实时导航状态
 ├── replay_imu_rtk.py   # 离线工具：无硬件时回放 IMU/RTK 数据
+├── build_waypoints_from_run.py  # 离线工具：把手动跑车录制转换成 path.csv
 └── web_static/         # 浏览器 Dashboard（自动打开 http://localhost:8805）
 ```
 
@@ -108,15 +109,26 @@ path.csv（或上传的 CSV）────────────────�
 
 ## 航点文件 (`path.csv`)
 
-制表符或逗号分隔。目前只读取 `lat` 和 `lon`，`tolerance_m` 和 `max_speed` 预留供未来按航点覆盖。
+制表符或逗号分隔（自动识别）。`lat`/`lon` 为必需列，`type`/`lift` 为可选列。
 
 ```
-id,lat,lon,tolerance_m,max_speed
-0,38.94130,-92.31896,0.5,1
-1,38.94140,-92.31880,0.5,1
+lat,lon,type,lift
+38.94130,-92.31896,,
+38.94140,-92.31880,pause,up
 ```
+- `type`：自由文本标签；值为 `pause` 时会在该航点强制停车。
+- `lift`：`up` / `down` 触发升降机构；其他值忽略。
 
 **运行时加载**：点击 Dashboard 的 **LOAD CSV** 按钮，无需重启即可更换航点文件。导航重置为 idle，航点表格立即更新。
+
+### 从手动跑车录制生成 `path.csv`
+
+出发前没有单独的 GPS 测量手段来预先获取精确坐标——因此改为先手动开一遍计划路线，再把录制转换成航点：
+
+1. 通过 `04_Robot` 网页界面手动开车：开车前点击 **REC** 开始录制，到达终点后停止，得到 `04_Robot/data_log/run_<timestamp>.jsonl`。
+2. 运行 `python 05_AutoNav/build_waypoints_from_run.py`。默认自动选取最新的 `run_*.jsonl`，按 `config.py` 里的 `WAYPOINT_MIN_DISTANCE_M` 对录制的 RTK 轨迹抽稀（保证相邻航点间距不小于该值），输出 `05_AutoNav/data_log/path_<run_ts>_<density>m.csv`。
+3. 调整 `WAYPOINT_MIN_DISTANCE_M` 可改变航点密度，重新执行第 2 步即可——无需重新开车，因为用的是同一份录制。
+4. 通过 **LOAD CSV** 加载生成的文件，或将其复制/重命名为 `path.csv` 并重启 `autonav_bridge.py`。
 
 ## 航向校准
 

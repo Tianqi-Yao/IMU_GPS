@@ -78,6 +78,10 @@ AUTONAV_ROBOT_SEND_TIMEOUT_S = 2.0                  # Max time allowed for one r
 LIFT_UP_DURATION_S      = 5.0                       # seconds to run UP actuator to reach high position
 LIFT_DOWN_DURATION_S    = 5.0                       # seconds to run DOWN actuator to reach low position
 
+# Waypoint generation from a recorded manual run (see build_waypoints_from_run.py)
+WAYPOINT_MIN_DISTANCE_M  = 1.0                      # min spacing between generated waypoints (meters); controls WP density
+WAYPOINT_MIN_FIX_QUALITY = 1                        # minimum RTK fix_quality to accept a sample
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 06_Camera  — OAK-D camera MJPEG streaming bridge

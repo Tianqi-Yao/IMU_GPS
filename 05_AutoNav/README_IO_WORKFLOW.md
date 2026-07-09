@@ -74,16 +74,37 @@ Used fields: `lat`, `lon`
 
 ### path.csv
 ```
-id    lat    lon    tolerance_m    max_speed
-0     38.94130  -92.31880  0.5  1
-...
+lat,lon,type,lift
+38.941083678333,-92.318317141667,alley,
+38.941095347133,-92.318317141667,pause,
 ```
-Columns (tab or comma separated):
-- `id`: integer index
-- `lat`: latitude (decimal degrees, +N)
-- `lon`: longitude (decimal degrees, +E)
-- `tolerance_m`: waypoint arrival radius (metres)
-- `max_speed`: maximum linear speed for this segment (m/s)
+Columns (tab or comma separated, auto-detected; parsed in `autonav_bridge._load_default_waypoints` / `_convert_csv_to_waypoints`):
+- `lat`: latitude (decimal degrees, +N) — **required**
+- `lon`: longitude (decimal degrees, +E) — **required**
+- `type`: free-text label; the value `pause` forces a stop at that waypoint — optional
+- `lift`: `up` / `down` triggers the lift actuator (`LIFT_UP_DURATION_S` / `LIFT_DOWN_DURATION_S`) — optional
+- Extra columns are ignored; only `lat`/`lon`/`type`/`lift` are read.
+
+The file can be replaced at runtime via the dashboard's "LOAD CSV" upload, which parses the
+same schema through `_convert_csv_to_waypoints`.
+
+### Generating path.csv from a manual run
+
+No hardware GPS survey step exists to get precise field coordinates ahead of time, so
+`path.csv` is instead produced by driving the planned route once and converting the
+recording:
+
+1. Manually drive the route via the `04_Robot` web UI, pressing **REC** before starting
+   and stopping it at the end — this writes `04_Robot/data_log/run_<timestamp>.jsonl`
+   (RTK/IMU/odom samples; the `Recorder` class already existed for this purpose).
+2. Run `python 05_AutoNav/build_waypoints_from_run.py` — it picks the newest `run_*.jsonl`
+   by default, filters RTK samples by `WAYPOINT_MIN_FIX_QUALITY`, downsamples them so
+   consecutive waypoints are at least `WAYPOINT_MIN_DISTANCE_M` apart (both in `config.py`),
+   and writes `05_AutoNav/data_log/path_<run_ts>_<density>m.csv` in the schema above.
+3. Adjust `WAYPOINT_MIN_DISTANCE_M` to control waypoint density and re-run step 2 — this
+   regenerates the path from the same recording, no re-drive needed.
+4. Load the generated CSV via the dashboard "LOAD CSV" button, or copy/rename it to
+   `path.csv` and restart `autonav_bridge.py`.
 
 ## Output contracts
 

@@ -11,6 +11,7 @@ Pure Pursuit + PID path tracking module. Reads IMU heading and RTK position, fol
 ├── path.csv            # Default waypoint file (overridable via UI LOAD CSV button)
 ├── listen_autonav.py   # Debug tool: prints live navigation status
 ├── replay_imu_rtk.py   # Offline tool: replays recorded IMU/RTK data without hardware
+├── build_waypoints_from_run.py  # Offline tool: converts a recorded manual run into path.csv
 └── web_static/         # Browser dashboard (opens automatically at http://localhost:8805)
 ```
 
@@ -108,15 +109,32 @@ path.csv (or uploaded CSV) ─────────────────�
 
 ## Waypoint File (`path.csv`)
 
-Tab or comma separated. Only `lat` and `lon` are used — `tolerance_m` and `max_speed` are reserved for future per-waypoint overrides.
+Tab or comma separated (auto-detected). `lat`/`lon` are required; `type` and `lift` are optional.
 
 ```
-id,lat,lon,tolerance_m,max_speed
-0,38.94130,-92.31896,0.5,1
-1,38.94140,-92.31880,0.5,1
+lat,lon,type,lift
+38.94130,-92.31896,,
+38.94140,-92.31880,pause,up
 ```
+- `type`: free-text label; `pause` forces a stop at that waypoint.
+- `lift`: `up` / `down` triggers the lift actuator; anything else is ignored.
 
 **Runtime upload**: click **LOAD CSV** in the dashboard to load any CSV without restarting. Navigation resets to idle and the waypoint table updates immediately.
+
+### Generating `path.csv` from a manual run
+
+There's no separate GPS survey step to get precise field coordinates ahead of time — instead,
+drive the planned route once and convert the recording into waypoints:
+
+1. Drive the route via the `04_Robot` web UI, pressing **REC** before starting and stopping it
+   at the end. This writes `04_Robot/data_log/run_<timestamp>.jsonl`.
+2. Run `python 05_AutoNav/build_waypoints_from_run.py`. It picks the newest `run_*.jsonl` by
+   default, downsamples the recorded RTK track so consecutive waypoints are at least
+   `WAYPOINT_MIN_DISTANCE_M` apart (`config.py`), and writes
+   `05_AutoNav/data_log/path_<run_ts>_<density>m.csv`.
+3. Adjust `WAYPOINT_MIN_DISTANCE_M` to change waypoint density and re-run step 2 — no need to
+   re-drive, since it re-processes the same recording.
+4. Load the result via **LOAD CSV**, or copy/rename it to `path.csv` and restart `autonav_bridge.py`.
 
 ## Heading Calibration
 
