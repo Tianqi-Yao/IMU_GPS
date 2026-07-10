@@ -204,8 +204,9 @@ window.addEventListener('load', () => {
     if (force < DEADZONE) {
       currentLinear = currentAngular = currentForce = 0.0;
     } else {
-      currentLinear  =  rawY * MAX_LINEAR  * speedRatio;
-      currentAngular = -rawX * MAX_ANGULAR * speedRatio;
+      const eased   = (force - DEADZONE) / (1 - DEADZONE);  // 0 → 1 continuous ramp, no jump
+      currentLinear  =  rawY * MAX_LINEAR  * speedRatio * eased;
+      currentAngular = -rawX * MAX_ANGULAR * speedRatio * eased;
       currentForce   = force;
     }
     updateJoyUI();

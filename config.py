@@ -60,6 +60,8 @@ ROBOT_SERIAL_BAUD      = 115200                    # Serial baud rate
 ROBOT_SERIAL_TIMEOUT   = 0.05                      # Serial read timeout (seconds)
 ROBOT_MAX_LINEAR       = 1.0                       # Max linear velocity (m/s)
 ROBOT_MAX_ANGULAR      = 1.0                       # Max angular velocity (rad/s)
+ROBOT_MAX_LINEAR_ACCEL  = 1.5                      # Max linear acceleration (m/s^2); limits joystick ramp rate
+ROBOT_MAX_ANGULAR_ACCEL = 3.0                      # Max angular acceleration (rad/s^2); limits joystick ramp rate
 ROBOT_WATCHDOG_TIMEOUT = 3.0                       # Watchdog timeout (seconds); triggers e-stop
 ROBOT_RECORD_INTERVAL  = 1.0                       # Recording sample interval (seconds); min 0.2
 

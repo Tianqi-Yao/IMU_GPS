@@ -69,6 +69,7 @@ WebSocket 输出地址：`ws://localhost:8889`。所有消息类型通过同一�
 | 消息 | 说明 |
 |------|------|
 | `{"type": "joystick", "linear": 0.5, "angular": 0.1}` | 速度指令，限幅至 `config.py` 中的 `±MAX_LINEAR` / `±MAX_ANGULAR` |
+| — | 收到的速度值为**期望目标值**；bridge 内部以 20Hz 的 `_velocity_ramp_loop` 按 `ROBOT_MAX_LINEAR_ACCEL` / `ROBOT_MAX_ANGULAR_ACCEL` 做斜坡限幅后才写串口，实际执行值是平滑后的结果，不是收到即写 |
 | `{"type": "toggle_state"}` | 切换 Feather M4 的自动/就绪状态（通过串口发送 `\r`） |
 | `{"type": "heartbeat"}` | 保活心跳。若超过 `WATCHDOG_TIMEOUT` 秒未收到，机器人紧急停止 |
 

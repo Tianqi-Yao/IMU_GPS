@@ -52,6 +52,8 @@ DEFAULT_SERIAL_BAUD    = _cfg.ROBOT_SERIAL_BAUD    if _cfg else 115200
 DEFAULT_SERIAL_TIMEOUT = _cfg.ROBOT_SERIAL_TIMEOUT if _cfg else 1.0
 DEFAULT_MAX_LINEAR     = _cfg.ROBOT_MAX_LINEAR     if _cfg else 1.0
 DEFAULT_MAX_ANGULAR    = _cfg.ROBOT_MAX_ANGULAR    if _cfg else 1.0
+DEFAULT_MAX_LINEAR_ACCEL  = _cfg.ROBOT_MAX_LINEAR_ACCEL  if _cfg else 1.5
+DEFAULT_MAX_ANGULAR_ACCEL = _cfg.ROBOT_MAX_ANGULAR_ACCEL if _cfg else 3.0
 DEFAULT_WATCHDOG_TIMEOUT = _cfg.ROBOT_WATCHDOG_TIMEOUT if _cfg else 2.0
 DEFAULT_IMU_WS_URL     = _cfg.NAV_IMU_WS           if _cfg else "ws://localhost:8766"
 DEFAULT_RTK_WS_URL     = _cfg.NAV_RTK_WS           if _cfg else "ws://localhost:8776"
@@ -237,6 +239,16 @@ class RtkWsClient:
 # BLOCK 3 — ROBOT WEBSOCKET SERVER
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _step_toward(current: float, target: float, max_delta: float) -> float:
+    """Move `current` toward `target` by at most `max_delta`."""
+    diff = target - current
+    if diff > max_delta:
+        return current + max_delta
+    if diff < -max_delta:
+        return current - max_delta
+    return target
+
+
 class RobotWebSocketServer:
     """
     WebSocket server for the browser.
@@ -254,6 +266,8 @@ class RobotWebSocketServer:
         serial_timeout:   float,
         max_linear:       float,
         max_angular:      float,
+        max_linear_accel:  float,
+        max_angular_accel: float,
         watchdog_timeout: float,
         imu_ws_url:       str,
         rtk_ws_url:       str,
@@ -264,6 +278,8 @@ class RobotWebSocketServer:
         self._serial_timeout   = serial_timeout
         self._max_linear       = max_linear
         self._max_angular      = max_angular
+        self._max_linear_accel  = max_linear_accel
+        self._max_angular_accel = max_angular_accel
         self._watchdog_timeout = watchdog_timeout
         self._imu_ws_url       = imu_ws_url
         self._rtk_ws_url       = rtk_ws_url
@@ -278,6 +294,13 @@ class RobotWebSocketServer:
         self._loop:        asyncio.AbstractEventLoop | None = None
         self._last_heartbeat = time.time()
         self._recorder     = Recorder(interval=DEFAULT_RECORD_INTERVAL)
+
+        # CORE — velocity ramp state: target = latest requested setpoint,
+        # out = smoothed value actually written to serial (see _velocity_ramp_loop).
+        self._target_linear  = 0.0
+        self._target_angular = 0.0
+        self._out_linear     = 0.0
+        self._out_angular    = 0.0
 
     def open_serial(self) -> None:
         try:
@@ -415,11 +438,28 @@ class RobotWebSocketServer:
             elapsed = time.time() - self._last_heartbeat
             if elapsed > self._watchdog_timeout:
                 logger.warning("Watchdog: no heartbeat for %.1fs — emergency stop", elapsed)
+                self._target_linear = self._target_angular = 0.0
+                self._out_linear    = self._out_angular    = 0.0
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, self._send_velocity, 0.0, 0.0)
                 if self._auto_active:
                     await loop.run_in_executor(None, self._send_raw, b"\r")
                 self._last_heartbeat = time.time()
+
+    async def _velocity_ramp_loop(self) -> None:
+        """CORE — ramp `_out_*` toward `_target_*` at a fixed 20 Hz tick and write to serial.
+
+        Decouples the actual serial send rate/smoothness from the (possibly jittery)
+        rate at which `joystick` WS messages arrive, and acceleration-limits any
+        step change in the requested setpoint.
+        """
+        dt = 0.05
+        while True:
+            await asyncio.sleep(dt)  # 20 Hz
+            self._out_linear  = _step_toward(self._out_linear,  self._target_linear,  self._max_linear_accel  * dt)
+            self._out_angular = _step_toward(self._out_angular, self._target_angular, self._max_angular_accel * dt)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._send_velocity, self._out_linear, self._out_angular)
 
     async def _ws_handler(self, websocket) -> None:
         async with self._clients_lock:
@@ -441,10 +481,8 @@ class RobotWebSocketServer:
                     self._last_heartbeat = time.time()
                 if msg_type == "joystick":
                     try:
-                        lin = max(-self._max_linear,  min(self._max_linear,  float(msg.get("linear",  0.0))))
-                        ang = max(-self._max_angular, min(self._max_angular, float(msg.get("angular", 0.0))))
-                        loop = asyncio.get_running_loop()
-                        await loop.run_in_executor(None, self._send_velocity, lin, ang)
+                        self._target_linear  = max(-self._max_linear,  min(self._max_linear,  float(msg.get("linear",  0.0))))
+                        self._target_angular = max(-self._max_angular, min(self._max_angular, float(msg.get("angular", 0.0))))
                     except (TypeError, ValueError):
                         pass
                 elif msg_type == "toggle_state":
@@ -484,6 +522,7 @@ class RobotWebSocketServer:
         async with websockets.serve(self._ws_handler, "0.0.0.0", self._port, ping_interval=None):
             await asyncio.gather(
                 self._odom_broadcast_loop(),
+                self._velocity_ramp_loop(),
                 self._watchdog_loop(),
                 imu_client.run(),
                 rtk_client.run(),
@@ -505,6 +544,8 @@ class RobotBridge:
         serial_timeout:   float,
         max_linear:       float,
         max_angular:      float,
+        max_linear_accel:  float,
+        max_angular_accel: float,
         watchdog_timeout: float,
         imu_ws_url:       str,
         rtk_ws_url:       str,
@@ -515,6 +556,8 @@ class RobotBridge:
         self._serial_timeout   = serial_timeout
         self._max_linear       = max_linear
         self._max_angular      = max_angular
+        self._max_linear_accel  = max_linear_accel
+        self._max_angular_accel = max_angular_accel
         self._watchdog_timeout = watchdog_timeout
         self._imu_ws_url       = imu_ws_url
         self._rtk_ws_url       = rtk_ws_url
@@ -534,6 +577,8 @@ class RobotBridge:
             serial_timeout   = self._serial_timeout,
             max_linear       = self._max_linear,
             max_angular      = self._max_angular,
+            max_linear_accel  = self._max_linear_accel,
+            max_angular_accel = self._max_angular_accel,
             watchdog_timeout = self._watchdog_timeout,
             imu_ws_url       = self._imu_ws_url,
             rtk_ws_url       = self._rtk_ws_url,
@@ -554,6 +599,8 @@ if __name__ == "__main__":
         serial_timeout   = DEFAULT_SERIAL_TIMEOUT,
         max_linear       = DEFAULT_MAX_LINEAR,
         max_angular      = DEFAULT_MAX_ANGULAR,
+        max_linear_accel  = DEFAULT_MAX_LINEAR_ACCEL,
+        max_angular_accel = DEFAULT_MAX_ANGULAR_ACCEL,
         watchdog_timeout = DEFAULT_WATCHDOG_TIMEOUT,
         imu_ws_url       = DEFAULT_IMU_WS_URL,
         rtk_ws_url       = DEFAULT_RTK_WS_URL,

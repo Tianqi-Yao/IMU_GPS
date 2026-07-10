@@ -69,6 +69,7 @@ Sent once on browser connect, and again whenever the Feather M4 reports a state 
 | Message | Description |
 |---------|-------------|
 | `{"type": "joystick", "linear": 0.5, "angular": 0.1}` | Velocity command. Clamped to `±MAX_LINEAR` / `±MAX_ANGULAR` from config |
+| — | Received values are **target** setpoints; the bridge's internal 20Hz `_velocity_ramp_loop` acceleration-limits them (`ROBOT_MAX_LINEAR_ACCEL` / `ROBOT_MAX_ANGULAR_ACCEL`) before writing to serial, so the value actually sent to the motors is a smoothed ramp, not a direct pass-through |
 | `{"type": "toggle_state"}` | Toggle AUTO/READY on Feather M4 (sends `\r` over serial) |
 | `{"type": "heartbeat"}` | Keep-alive. If missing for > `WATCHDOG_TIMEOUT` seconds, robot is emergency-stopped |
 
