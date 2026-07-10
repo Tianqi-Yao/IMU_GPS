@@ -15,8 +15,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 EARTH_RADIUS_M = 6371008.8 # mean Earth radius in meters
-LAT = 38.9412928598587
-LON = -92.31884600793728
+LAT = 38.895947453028825
+LON = -92.2075686338995
 RADIUS_MILES = 0.5
 ZOOM_MIN = 1
 ZOOM_MAX = 19

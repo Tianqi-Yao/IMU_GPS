@@ -31,8 +31,8 @@ IMU_NORTH_OFFSET  = 0.0                      # North heading offset (degrees) fo
 # 02_RTK  — RTK GPS serial → WebSocket bridge
 # ══════════════════════════════════════════════════════════════════════════════
 
-RTK_SERIAL_PORT   = "/dev/cu.usbmodem1103"  # RTK receiver serial port (Linux: /dev/ttyACM1)
-RTK_BAUD          = 9600                     # Serial baud rate (NMEA standard)
+RTK_SERIAL_PORT   = "/dev/cu.usbmodem1101"  # RTK receiver serial port (Linux: /dev/ttyACM1)
+RTK_BAUD          = 115200                     # Serial baud rate (NMEA standard)
 RTK_WS_PORT       = 8775                     # HTTP port; WebSocket = RTK_WS_PORT + 1
 RTK_HZ            = 5.0                      # Broadcast rate (Hz)
 RTK_DEFAULT_LAT   = 38.9412928598587         # Fallback latitude when no GPS fix
