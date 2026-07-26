@@ -1,0 +1,403 @@
+:root {
+  --bg:      #0d1117;
+  --panel:   #161b22;
+  --border:  #30363d;
+  --dim:     #8b949e;
+  --text:    #e6edf3;
+  --blue:    #58a6ff;
+  --green:   #3fb950;
+  --orange:  #f0883e;
+  --red:     #ff4060;
+  --yellow:  #e3b341;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+#header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.title { font-weight: bold; font-size: 14px; letter-spacing: 2px; color: var(--blue); }
+
+#status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--dim);
+}
+#status-dot.connected { background: var(--green); }
+#status-text { color: var(--dim); font-size: 11px; }
+
+/* ── Main layout ── */
+#app { display: flex; flex-direction: column; height: 100vh; }
+
+#main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  gap: 0;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+#col-input  { width: 25%; border-right: 1px solid var(--border); }
+#col-mid    { width: 50%; align-items: center; border-right: 1px solid var(--border); }
+#col-output { width: 25%; }
+
+.col-label {
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--dim);
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+
+/* ── JSON blocks ── */
+.json-block {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.json-type {
+  font-size: 10px;
+  color: var(--green);
+  margin-bottom: 4px;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+
+.age { color: var(--dim); font-size: 9px; margin-left: 6px; }
+
+.json-block pre {
+  color: var(--dim);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── State badge ── */
+#state-badge {
+  font-size: 22px;
+  font-weight: bold;
+  letter-spacing: 4px;
+  padding: 10px 32px;
+  border-radius: 6px;
+  border: 2px solid;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+.state-idle    { color: var(--dim);    border-color: var(--border); }
+.state-running { color: var(--green);  border-color: var(--green);  box-shadow: 0 0 12px rgba(63,185,80,0.3); }
+.state-paused  { color: var(--yellow); border-color: var(--yellow); }
+.state-arrived { color: var(--blue);   border-color: var(--blue);   }
+.state-lifting { color: var(--orange); border-color: var(--orange); box-shadow: 0 0 12px rgba(240,136,62,0.3); }
+
+#state-reason {
+  font-size: 12px;
+  color: var(--yellow);
+  margin-bottom: 8px;
+  margin-top: -4px;
+}
+
+/* ── Waypoint arrival banner ── */
+#wp-arrive-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(240,136,62,0.15);
+  border: 1px solid var(--orange);
+  border-radius: 6px;
+  padding: 8px 14px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+  animation: pulse-banner 1s ease-in-out infinite alternate;
+}
+#wp-arrive-msg {
+  color: var(--orange);
+  font-weight: bold;
+  flex: 1;
+}
+.btn-continue {
+  background: var(--orange);
+  color: var(--bg);
+  font-weight: bold;
+  border-color: var(--orange);
+  white-space: nowrap;
+}
+.btn-continue:hover { opacity: 0.85; }
+@keyframes pulse-banner {
+  from { box-shadow: 0 0 4px rgba(240,136,62,0.3); }
+  to   { box-shadow: 0 0 12px rgba(240,136,62,0.7); }
+}
+
+/* ── Control buttons ── */
+#ctrl-btns {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+
+.ctrl-btn {
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--dim);
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ctrl-btn:hover { filter: brightness(1.4); }
+
+.btn-start       { border-color: var(--green);  color: var(--green); }
+.btn-stop        { border-color: var(--red);    color: var(--red); }
+.btn-restart     { border-color: var(--orange); color: var(--orange); }
+.btn-pause-mode  { border-color: var(--dim);    color: var(--dim); }
+
+/* ── Manual drive ── */
+#manual-drive {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+.btn-fwd { border-color: var(--blue);  color: var(--blue);  flex: 1; }
+.btn-bwd { border-color: var(--dim);   color: var(--dim);   flex: 1; }
+#manual-drive .ctrl-btn { font-size: 13px; padding: 10px 0; }
+
+/* ── Lift control ── */
+#lift-ctrl {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+.btn-lift-up   { border-color: var(--orange); color: var(--orange); flex: 1; }
+.btn-lift-stop { border-color: var(--dim);    color: var(--dim);    flex: 1; }
+.btn-lift-down { border-color: var(--yellow); color: var(--yellow); flex: 1; }
+#lift-ctrl .ctrl-btn { font-size: 12px; padding: 9px 0; }
+
+/* ── Lift duration settings ── */
+#lift-settings {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+.lift-set-label { font-size: 10px; color: var(--dim); letter-spacing: 1px; }
+.lift-set-input {
+  width: 52px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--orange);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  padding: 4px 6px;
+  text-align: center;
+}
+.btn-lift-set { border-color: var(--orange); color: var(--orange); padding: 5px 10px; margin-left: 2px; }
+
+/* ── Lateral offset control ── */
+#offset-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+  width: 100%;
+}
+.offset-label { font-size: 10px; color: var(--dim); letter-spacing: 1px; min-width: 44px; }
+.offset-val   { font-size: 12px; color: var(--blue); font-weight: bold; min-width: 42px; text-align: right; }
+#offset-slider { flex: 1; accent-color: var(--blue); cursor: pointer; }
+.btn-offset-apply { border-color: var(--blue); color: var(--blue); padding: 5px 10px; white-space: nowrap; }
+.btn-export-csv   { border-color: var(--dim);  color: var(--dim);  padding: 5px 10px; white-space: nowrap; }
+
+/* ── Path map SVG ── */
+#path-map-panel { flex: none; min-height: 0; }
+#path-map { display: block; background: #0a0e14; border-radius: 3px; }
+.pm-line-orig { fill: none; stroke: var(--blue);   stroke-width: 1.5; stroke-opacity: 0.5; }
+.pm-line-off  { fill: none; stroke: var(--orange); stroke-width: 2;   stroke-dasharray: 5 3; }
+.pm-robot  { fill: var(--green);  stroke: none; }
+.pm-target { fill: var(--yellow); stroke: none; }
+
+/* ── Heading calibration ── */
+#calib-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 10px 12px;
+  width: 100%;
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+.calib-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.btn-mark      { border-color: var(--orange); color: var(--orange); }
+.btn-calibrate { border-color: var(--green);  color: var(--green);  }
+#calib-info { display: flex; flex-direction: column; gap: 3px; }
+.calib-line { display: flex; justify-content: space-between; font-size: 11px; }
+.calib-label { color: var(--dim); letter-spacing: 1px; }
+#calib-marked, #calib-current, #calib-bearing, #calib-offset { color: var(--text); font-weight: bold; }
+#calib-offset.applied { color: var(--green); }
+
+/* ── CSV import ── */
+#csv-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+.btn-csv  { border-color: var(--blue); color: var(--blue); }
+#csv-filename { font-size: 10px; color: var(--dim); letter-spacing: 0.5px; }
+
+/* ── Speed slider ── */
+#speed-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+  width: 100%;
+}
+.spd-label { font-size: 11px; color: var(--dim); letter-spacing: 1px; min-width: 28px; }
+.spd-val   { font-size: 13px; color: var(--green); font-weight: bold; min-width: 38px; text-align: right; }
+#speed-slider {
+  flex: 1;
+  accent-color: var(--green);
+  cursor: pointer;
+}
+
+/* ── Compass ── */
+#compass-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+
+#compass { width: 180px; height: 180px; }
+
+.compass-ring  { fill: none; stroke: var(--border); stroke-width: 2; }
+.compass-label { fill: var(--dim); font-size: 12px; text-anchor: middle; dominant-baseline: middle; font-family: 'Courier New', monospace; }
+
+.needle-heading {
+  stroke: var(--blue);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.needle-target {
+  stroke: var(--orange);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  stroke-linecap: round;
+}
+.compass-center { fill: var(--text); }
+
+#compass-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 6px;
+  font-size: 10px;
+}
+.legend-heading { color: var(--blue); }
+.legend-target  { color: var(--orange); }
+
+/* ── Metrics grid ── */
+#metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.metric {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mlabel { font-size: 9px; color: var(--dim); letter-spacing: 1px; }
+.mval   { font-size: 14px; color: var(--text); font-weight: bold; }
+
+/* ── Waypoint table ── */
+#wp-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  flex-shrink: 0;
+}
+#wp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+  margin-top: 4px;
+}
+#wp-table th {
+  color: var(--dim);
+  text-align: left;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: 1px;
+  font-size: 9px;
+}
+#wp-table td {
+  padding: 3px 6px;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+#wp-table tr.wp-current td {
+  color: var(--green);
+  font-weight: bold;
+  background: rgba(63, 185, 80, 0.08);
+}
+#wp-table tr:last-child td { border-bottom: none; }

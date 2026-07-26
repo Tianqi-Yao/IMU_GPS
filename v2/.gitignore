@@ -1,0 +1,7 @@
+**/__pycache__/*
+**/*.log
+**/.DS_Store
+**/.vscode/*
+.cache
+**/.cache
+06_Camera/web_static/snapshots/*.html
