@@ -219,6 +219,7 @@ class RobotWsClient:
         self._send_timeout_s = send_timeout_s
         self._ws = None
         self._last_sent_ts = 0.0
+        self._warned_disconnected = False
 
     @property
     def connected(self) -> bool:
@@ -226,7 +227,9 @@ class RobotWsClient:
 
     async def send(self, linear: float, angular: float) -> None:
         if self._ws is None:
-            logger.warning("RobotWsClient: not connected, dropping drive command")
+            if not self._warned_disconnected:
+                logger.warning("RobotWsClient: not connected, dropping drive command")
+                self._warned_disconnected = True
             return
         try:
             await asyncio.wait_for(
@@ -240,7 +243,9 @@ class RobotWsClient:
 
     async def send_lift(self, cmd: str) -> None:
         if self._ws is None:
-            logger.warning("RobotWsClient: not connected, dropping lift command")
+            if not self._warned_disconnected:
+                logger.warning("RobotWsClient: not connected, dropping lift command")
+                self._warned_disconnected = True
             return
         try:
             await asyncio.wait_for(
@@ -265,6 +270,7 @@ class RobotWsClient:
             try:
                 async with websockets.connect(self._url) as ws:
                     self._ws = ws
+                    self._warned_disconnected = False
                     try:
                         async for _ in ws:
                             pass  # drain odom/state broadcasts; not needed here

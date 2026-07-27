@@ -108,10 +108,20 @@ class NMEAPipeline:
 
     @staticmethod
     def _verify_checksum(line: str) -> Optional[str]:
-        if not line.startswith("$") or "*" not in line:
+        if "*" not in line:
             return None
+        star_idx = line.rindex("*")
+        # A UART framing glitch occasionally merges two back-to-back sentences
+        # onto one readline() (e.g. "$GBGSV,...$GNGGA,...*64"), which corrupts
+        # the XOR if computed from index 0. Re-anchor on the last "$" before
+        # the "*" so the trailing, correctly-checksummed sentence still parses
+        # instead of being dropped.
+        start_idx = line.rfind("$", 0, star_idx)
+        if start_idx == -1:
+            return None
+        line = line[start_idx:]
+        star_idx = line.rindex("*")
         try:
-            star_idx = line.rindex("*")
             expected = int(line[star_idx + 1:star_idx + 3], 16)
         except (ValueError, IndexError):
             return None
