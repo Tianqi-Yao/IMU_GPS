@@ -33,12 +33,29 @@ current waypoint). This is a deliberate, validated simplification; the
   geometry (not haversine great-circle), fine at field scale, not for long
   distances. Public API (no leading underscore) — used by both
   `autonav_bridge.py` and `build_waypoints_from_run.py`.
-- `compute(lat, lon, heading_deg, waypoints, wp_idx, dt_s)` — heading error
-  -> proportional gain (`AUTONAV_PID_KP`) -> hard dead zone
+- `compute(lat, lon, heading_deg, waypoints, wp_idx, dt_s, prev_angular=0.0)`
+  — heading error -> proportional gain (`AUTONAV_PID_KP`) -> hard dead zone
   (`AUTONAV_DEAD_ZONE_DEG`, below which angular = 0 exactly, not filtered).
-  Linear velocity: two-stage — decelerates linearly within
-  `AUTONAV_DECEL_RADIUS_M` of the waypoint, and drops to zero entirely
-  (turn-in-place) when the heading error exceeds `AUTONAV_TURN_THRESHOLD_DEG`.
+  On high-friction ground a bare P command near the dead zone edge is too
+  weak to break static friction (the error grows unchecked until a much
+  bigger command "breaks free" and overshoots — a field-observed
+  stick-slip weave when driving straight), so two feedforward-style terms
+  compensate without turning this into a PID or Pure Pursuit controller:
+    - `AUTONAV_MIN_ANGULAR_KICK` — deadband/stiction floor: any nonzero
+      angular command outside the dead zone is at least this large.
+    - `AUTONAV_ANGULAR_SLEW_RATE` — rate-limits the *output* command
+      (rad/s², not a derivative of the error) so the kick above doesn't
+      itself jump and overshoot; `prev_angular` (this function's own last
+      return value, threaded through explicitly by the caller since this
+      stays a pure function) is what it slews from.
+  Linear velocity: decelerates within `AUTONAV_DECEL_RADIUS_M` of the
+  waypoint, and **tapers continuously** (not a hard stop) down to
+  `AUTONAV_LINEAR_TURN_FLOOR` as heading error grows past
+  `AUTONAV_DEAD_ZONE_DEG` up to `AUTONAV_LINEAR_TAPER_DEG` — turning while
+  still rolling only fights kinetic friction, not the static friction of a
+  dead-stop pivot turn, which is why turning-while-moving already worked
+  better than the old hard turn-in-place cutoff in the field. The taper
+  never raises speed above what the waypoint-deceleration logic set.
   Arrival is `dist_m < AUTONAV_REACH_TOL_M`.
 - `compute_calibration_offset(cur_lat, cur_lon, mark_lat, mark_lon, heading_raw)`
   — in-field compass calibration: stand at a known point facing a landmark,
@@ -76,10 +93,11 @@ current waypoint). This is a deliberate, validated simplification; the
 
 ## `config.py` tuning knobs (all real, top-level definitions — none hidden as algorithm-file fallback defaults)
 
-`AUTONAV_PID_KP`, `AUTONAV_DEAD_ZONE_DEG`, `AUTONAV_TURN_THRESHOLD_DEG`,
-`AUTONAV_DECEL_RADIUS_M`, `AUTONAV_REACH_TOL_M`, `AUTONAV_MAX_LINEAR_VEL`,
-`AUTONAV_MIN_LINEAR_VEL`, `AUTONAV_MAX_ANGULAR_VEL`, `AUTONAV_MANUAL_SPEED`,
-`AUTONAV_ARRIVE_FRAMES`.
+`AUTONAV_PID_KP`, `AUTONAV_DEAD_ZONE_DEG`, `AUTONAV_MIN_ANGULAR_KICK`,
+`AUTONAV_ANGULAR_SLEW_RATE`, `AUTONAV_LINEAR_TAPER_DEG`,
+`AUTONAV_LINEAR_TURN_FLOOR`, `AUTONAV_DECEL_RADIUS_M`, `AUTONAV_REACH_TOL_M`,
+`AUTONAV_MAX_LINEAR_VEL`, `AUTONAV_MIN_LINEAR_VEL`, `AUTONAV_MAX_ANGULAR_VEL`,
+`AUTONAV_MANUAL_SPEED`, `AUTONAV_ARRIVE_FRAMES`.
 
 ## Output contract (WebSocket, `autonav_status`, ~`AUTONAV_CONTROL_HZ` Hz)
 

@@ -359,6 +359,7 @@ class AutoNavLoop:
         self._waiting_at_wp = False
         self._confirm_advance = False
         self._sensor_block_reason: Optional[str] = None
+        self._prev_angular = 0.0
         self._calib_mark: Optional[dict] = None
         self._calib_offset_applied: Optional[float] = None
         self._pause_mode = "all"
@@ -373,6 +374,7 @@ class AutoNavLoop:
         self._waiting_at_wp = False
         self._confirm_advance = False
         self._sensor_block_reason = None
+        self._prev_angular = 0.0
 
     # ---- commands -----------------------------------------------------
     def cmd_start(self) -> None:
@@ -451,6 +453,7 @@ class AutoNavLoop:
         self._state = "paused"
         self._paused_by_timeout = False
         self._manual_linear = 0.0
+        self._prev_angular = 0.0
         await self._robot.send(0.0, 0.0)
 
     def cmd_resume(self) -> str:
@@ -613,6 +616,7 @@ class AutoNavLoop:
         if self._state == "running" and (not sensors_ok or not robot_ok):
             self._state = "paused"
             self._paused_by_timeout = True
+            self._prev_angular = 0.0
             self._sensor_block_reason = (
                 "robot_disconnected" if not robot_ok
                 else _sensor_block_reason(fix_quality, gps_age, gps_packet_age, imu_age)
@@ -633,8 +637,9 @@ class AutoNavLoop:
         dt_s = 1.0 / max(CONTROL_HZ, 0.5)
 
         if self._state == "running" and sensors_ok:
-            result = algo.compute(lat, lon, heading, self._waypoints, self._wp_idx, dt_s)
+            result = algo.compute(lat, lon, heading, self._waypoints, self._wp_idx, dt_s, self._prev_angular)
             dist_m, bearing_deg = result.dist_m, result.bearing_deg
+            self._prev_angular = result.angular
             linear, angular, arrived, _advanced = self._apply_waypoint_progress(
                 result.linear, result.angular, result.arrived
             )

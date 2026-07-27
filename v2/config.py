@@ -88,7 +88,22 @@ LIFT_DOWN_DURATION_S    = 5.0                       # seconds to run DOWN actuat
 # Heading/velocity control tuning (algorithm constants — see autonav_algo.py::compute)
 AUTONAV_PID_KP              = 0.02   # proportional gain: angular = KP * heading_error_deg
 AUTONAV_DEAD_ZONE_DEG       = 3.0    # |heading_error| below this -> angular = 0 (hard dead zone, not a filter)
-AUTONAV_TURN_THRESHOLD_DEG  = 5.0    # |heading_error| above this -> linear = 0 (turn-in-place)
+AUTONAV_MIN_ANGULAR_KICK    = 0.25   # rad/s floor applied to any nonzero angular command once outside the dead
+                                      # zone. On high-friction ground a weak proportional command never breaks
+                                      # static friction, so the error keeps growing until a much bigger command
+                                      # "breaks free" and overshoots -- this guarantees enough authority to turn
+                                      # right away instead. Field-tune: raise if it still doesn't turn near the
+                                      # dead zone edge, lower if it snaps into a turn too hard.
+AUTONAV_ANGULAR_SLEW_RATE   = 1.5    # rad/s^2 max rate of change of the angular command (ramps toward the
+                                      # target instead of jumping), damping the overshoot the kick above can
+                                      # cause. Field-tune: lower = smoother but slower to react; 0 disables.
+AUTONAV_LINEAR_TAPER_DEG    = 30.0   # heading error (deg) at which linear velocity reaches AUTONAV_LINEAR_TURN_FLOOR,
+                                      # tapering continuously from AUTONAV_DEAD_ZONE_DEG. Replaces the old hard
+                                      # "stop and pivot" turn-in-place behavior: turning while still rolling only
+                                      # needs to overcome kinetic friction, not static friction from a dead stop,
+                                      # which is why turning while moving was already working better in the field.
+AUTONAV_LINEAR_TURN_FLOOR   = 0.15   # m/s minimum linear speed kept even during a sharp turn (never a full stop);
+                                      # never raises speed above what deceleration near a waypoint already set.
 AUTONAV_DECEL_RADIUS_M      = 1.5    # start linear deceleration within this distance of the waypoint
 AUTONAV_REACH_TOL_M         = 0.5    # waypoint arrival tolerance (meters)
 AUTONAV_MAX_LINEAR_VEL      = 1.0    # m/s
