@@ -658,8 +658,9 @@ class CameraBridge:
         elif t == "switch_plugin":
             try:
                 self._pipeline.switch_plugin(msg.get("plugin_name", ""), msg.get("config", {}))
-            except KeyError as exc:
-                logger.warning("switch_plugin failed: %s", exc)
+            except Exception as exc:
+                logger.warning("switch_plugin failed: %s", exc, exc_info=True)
+                return json.dumps({"type": "switch_plugin_error", "version": WS_MSG_VERSION, "error": str(exc)})
         elif t == "update_plugin_config":
             self._pipeline.update_plugin_config(msg.get("config", {}))
         elif t == "restart_cameras":
