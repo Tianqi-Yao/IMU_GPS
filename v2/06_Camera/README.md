@@ -31,10 +31,58 @@ class FrameProcessor(abc.ABC):
 Plugins are **stateless-or-light-state image transforms**; they never
 manage camera hardware lifecycle (that's exclusively `CameraDevice`'s job).
 New plugin files dropped into `plugins/` are auto-discovered at import time
-via `@register_processor` — no other code needs to change. Four reference
-plugins ship: `simple_color` (passthrough), `depth_cam` (RGB/depth/blend),
-`path_cam` (yellow-tape/path detection), `disparity_demo` (raw disparity
-visualization).
+via `@register_processor` — no other code needs to change (**camera_bridge.py
+must be restarted** for a newly added plugin file to be picked up; it is not
+hot-reloaded into an already-running process). Five reference plugins ship:
+`simple_color` (passthrough), `depth_cam` (RGB/depth/blend), `path_cam`
+(yellow-tape/path detection), `disparity_demo` (raw disparity visualization),
+`pose_control` (gesture-driven robot control, see below).
+
+### `pose_control` — gesture-driven robot control
+
+Selecting this plugin (i.e. sending `switch_plugin` for it — the moment the
+browser's dropdown + "Apply Plugin" picks it) starts gesture control
+immediately; there is no separate start/stop message. Uses mediapipe Pose
+landmarks on the RGB stream:
+
+- right wrist above the nose → drive forward
+- left wrist above the nose → drive backward
+- neither raised → hold (linear = 0)
+- person off-center horizontally → turns to re-center them, applied every
+  frame regardless of the forward/backward gesture (can track the person
+  while also moving)
+- no person detected → **stops and waits** (linear = angular = 0); does not
+  search/rotate on its own
+
+Unlike the other plugins, `process()` has a side effect beyond the frame it
+returns: every call also sends `{"type": "joystick", "linear": ..., "angular": ...}`
+straight to `04_Robot` over its own WebSocket connection
+(`ws://localhost:<ROBOT_WS_PORT + 1>`) — the same schema `05_AutoNav`'s
+`RobotWsClient` uses. **`robot_bridge.py` has no arbitration between
+concurrent joystick senders (last message wins) — do not run this plugin at
+the same time as `05_AutoNav`'s autonomous driving or the `04_Robot` manual
+joystick page; they will fight each other for control.**
+
+If both `CAM1_IP` and `CAM2_IP` are configured, both cameras' frames are
+handed to the same plugin instance and can call `process()` concurrently
+from two threads; only the first camera to call `process()` runs pose
+detection and drives the robot, the other is passed through unchanged (to
+avoid two cameras independently sending conflicting drive commands).
+
+Config knobs (`config_schema`, all live-tunable via `update_plugin_config`
+except `min_detection_confidence` which needs a fresh `switch_plugin` to take
+effect): `move_speed` (m/s), `turn_gain`, `center_dead_zone_frac`,
+`raise_margin_frac`, `min_detection_confidence`, `swap_hands` (flip if the
+feed is mirrored and left/right come out backwards).
+
+Requires `pip install mediapipe` in the environment `camera_bridge.py` runs
+under (not a project-wide dependency — only this plugin needs it; if it's
+missing, `pose_control` just won't appear in the plugin list, logged as a
+`_auto_discover` warning rather than crashing the bridge). The pose landmarker
+model bundle (a few MB) downloads once on first use to
+`plugins/models/pose_landmarker_lite.task` (gitignored — a binary asset, not
+source) — expect a one-time pause in the dashboard the first time this
+plugin is selected while it downloads.
 
 ## Output contract (WebSocket, `camera_status`, ~1Hz)
 
