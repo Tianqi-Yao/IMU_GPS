@@ -246,8 +246,13 @@ class PoseControlProcessor(FrameProcessor):
     def _send_drive(self, linear: float, angular: float) -> None:
         if self._robot_ws is None:
             try:
-                self._robot_ws = ws_sync_client.connect(_ROBOT_WS_URL, open_timeout=_ROBOT_CONNECT_TIMEOUT_S)
+                self._robot_ws = ws_sync_client.connect(
+                    _ROBOT_WS_URL, open_timeout=_ROBOT_CONNECT_TIMEOUT_S,
+                )
                 self._warned_disconnected = False
+                threading.Thread(
+                    target=self._drain_robot_ws, args=(self._robot_ws,), daemon=True,
+                ).start()
             except Exception as exc:
                 if not self._warned_disconnected:
                     logger.warning("pose_control: cannot reach 04_Robot at %s: %s", _ROBOT_WS_URL, exc)
@@ -266,6 +271,17 @@ class PoseControlProcessor(FrameProcessor):
             except Exception:
                 pass
             self._robot_ws = None
+
+    def _drain_robot_ws(self, ws) -> None:
+        # robot_bridge broadcasts odom/imu/rtk to every connected client;
+        # this connection only sends, so it must still drain incoming
+        # traffic or the default max_queue=16 backlog jams the connection's
+        # receive thread and eventually kills the connection.
+        try:
+            for _ in ws:
+                pass
+        except Exception:
+            pass
 
     # ── OUTPUT (overlay) ──────────────────────────────────────────────────
 
