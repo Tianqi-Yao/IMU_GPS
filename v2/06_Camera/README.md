@@ -41,14 +41,17 @@ visualization).
 ```json
 {
   "type": "camera_status", "version": 1,
-  "cam_selection": "cam1", "streaming": true,
+  "cam_selection": 1, "streaming": true,
   "fps": 24.5, "width": 640, "height": 400,
   "mjpeg_url_cam1": "http://{host}:8080/", "mjpeg_url_cam2": "http://{host}:8081/",
   "cam1_clients": 1, "cam2_clients": 0,
   "cam1_streaming": true, "cam2_streaming": false,
   "cam1_fps": 24.5, "cam2_fps": 0.0,
   "active_plugin": "simple_color", "active_plugin_config": {},
-  "available_plugins": ["simple_color", "depth_cam", "path_cam", "disparity_demo"],
+  "available_plugins": [
+    {"name": "simple_color", "label": "RGB Preview", "description": "...", "config_schema": [], "required_streams": ["rgb"]},
+    {"name": "depth_cam", "label": "Depth Camera", "description": "...", "config_schema": [...], "required_streams": ["rgb", "depth"]}
+  ],
   "available_streams": ["rgb", "depth", "disparity"]
 }
 ```
@@ -62,7 +65,7 @@ the consumer (`camera_visualizer.js` replaces it with `window.location.hostname`
 ## Control messages (browser -> bridge)
 
 `start_stream{cam_id?}`, `stop_stream{cam_id?}`, `switch_camera{cam_id}`,
-`switch_plugin{plugin,config}` (full config replacement, not merged),
+`switch_plugin{plugin_name,config}` (full config replacement, not merged),
 `update_plugin_config{config}` (merged into the current config, calls
 `reconfigure()` without recreating the plugin), `restart_cameras{fps,width,height}`
 (the only path that actually closes/reopens the camera hardware), `snapshot{cam_id}`

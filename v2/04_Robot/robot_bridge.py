@@ -91,6 +91,8 @@ class Recorder:
         return self._file is not None
 
     def start(self) -> str:
+        if self.active:
+            return self.filename
         self.LOG_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.filename = f"run_{ts}.jsonl"
@@ -134,6 +136,7 @@ class Recorder:
                 "type": "rtk", "rec_ts": rec_ts,
                 "lat": msg.get("lat"), "lon": msg.get("lon"),
                 "fix_quality": msg.get("fix_quality"), "num_sats": msg.get("num_sats"),
+                "source": msg.get("source"),
             }
         if msg_type == "odom":
             return {
@@ -183,10 +186,21 @@ class RobotState:
             parts = line[2:].decode().split(",")
             v = float(parts[0])
             w = float(parts[1])
-            state_int = int(parts[2]) if len(parts) > 2 else None
-            soc = int(parts[3]) if len(parts) > 3 else None
         except (ValueError, IndexError):
             return None
+
+        state_int: Optional[int] = None
+        if len(parts) > 2:
+            try:
+                state_int = int(parts[2])
+            except ValueError:
+                pass
+        soc: Optional[int] = None
+        if len(parts) > 3:
+            try:
+                soc = int(parts[3])
+            except ValueError:
+                pass
 
         self.last_odom = {"v": v, "w": w, "state": state_int, "soc": soc, "ts": time.time()}
 
@@ -259,6 +273,8 @@ class SerialLink:
     control loops) live outside this class.
     """
 
+    RECONNECT_DELAY_S = 3.0
+
     def __init__(self, port: str, baud: int, timeout: float) -> None:
         self._port = port
         self._baud = baud
@@ -268,11 +284,22 @@ class SerialLink:
 
     def open(self) -> None:
         try:
-            with self._ser_lock:
-                self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
-            logger.info("Opened serial port %s @ %d baud", self._port, self._baud)
+            ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
         except serial.SerialException as exc:
             logger.error("Cannot open serial port %s: %s", self._port, exc)
+            return
+        with self._ser_lock:
+            self._ser = ser
+        logger.info("Opened serial port %s @ %d baud", self._port, self._baud)
+
+    def _close(self) -> None:
+        with self._ser_lock:
+            ser, self._ser = self._ser, None
+        if ser is not None:
+            try:
+                ser.close()
+            except Exception:
+                pass
 
     def write_velocity(self, linear: float, angular: float) -> None:
         self._write(f"V{linear:.2f},{angular:.2f}\n".encode())
@@ -292,6 +319,7 @@ class SerialLink:
             ser.write(data)
         except serial.SerialException as exc:
             logger.error("Serial write failed: %s", exc)
+            self._close()
 
     def start_reader(self, on_line: Callable[[bytes], None]) -> None:
         threading.Thread(target=self._reader_loop, args=(on_line,), name="serial-reader", daemon=True).start()
@@ -299,19 +327,24 @@ class SerialLink:
     def _reader_loop(self, on_line: Callable[[bytes], None]) -> None:
         buf = b""
         while True:
-            try:
+            with self._ser_lock:
+                ser = self._ser
+            if ser is None or not ser.is_open:
+                buf = b""
+                self.open()
                 with self._ser_lock:
-                    ser = self._ser
-                if ser is None or not ser.is_open:
-                    buf = b""
-                    time.sleep(0.1)
-                    continue
+                    reconnected = self._ser is not None and self._ser.is_open
+                if not reconnected:
+                    time.sleep(self.RECONNECT_DELAY_S)
+                continue
+            try:
                 n = ser.in_waiting
                 chunk = ser.read(n) if n > 0 else b""
             except serial.SerialException as exc:
-                logger.error("Serial read error: %s", exc)
+                logger.error("Serial read error: %s. Reconnecting in %.0fs.", exc, self.RECONNECT_DELAY_S)
+                self._close()
                 buf = b""
-                time.sleep(0.1)
+                time.sleep(self.RECONNECT_DELAY_S)
                 continue
             if chunk:
                 buf += chunk
@@ -444,6 +477,11 @@ class RobotBridge:
 
     async def _handle_client_connect(self, _websocket) -> None:
         await self._broadcast({"type": "state_status", "active": self._robot_state.active})
+        await self._broadcast({
+            "type": "rec_status",
+            "recording": self._recorder.active,
+            "filename": self._recorder.filename if self._recorder.active else "",
+        })
 
     async def _handle_client_message(self, _websocket, raw: str) -> None:
         try:

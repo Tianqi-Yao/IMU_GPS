@@ -12,22 +12,33 @@ Run: python replay_imu_websocket.py
 import asyncio
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import List, Optional
 
 import websockets
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
+from common.ports import derive_ws_port
+
 DATA_LOG_DIR = Path(__file__).parent / "data_log"
 
 
 def _find_latest_jsonl(directory: Path) -> Optional[Path]:
-    files = sorted(directory.glob("*.jsonl"))
-    return files[-1] if files else None
+    files = list(directory.glob("*.jsonl"))
+    return max(files, key=lambda p: p.stat().st_mtime, default=None)
 
 
 INPUT_PATH = _find_latest_jsonl(DATA_LOG_DIR)
 HOST = "0.0.0.0"
-PORT = 8766
+PORT = derive_ws_port(_cfg.IMU_WS_PORT if _cfg else 8765)
 HZ = 50.0
 LOOP_FOREVER = True
 
@@ -75,7 +86,7 @@ async def _run_server(records: List[str], host: str, port: int, hz: float, loop_
             for raw in records:
                 if clients:
                     dead = set()
-                    for ws in clients:
+                    for ws in list(clients):
                         try:
                             await ws.send(raw)
                         except websockets.exceptions.ConnectionClosed:

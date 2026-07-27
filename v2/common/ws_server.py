@@ -25,6 +25,8 @@ OnClientConnect = Callable[[Any], Union[None, Awaitable[None]]]
 class BroadcastWsServer:
     """Manages a set of WebSocket clients and broadcasts JSON payloads to them."""
 
+    SEND_TIMEOUT_S = 5.0
+
     def __init__(
         self,
         host: str,
@@ -44,18 +46,25 @@ class BroadcastWsServer:
         return len(self._clients)
 
     async def broadcast(self, payload: dict) -> None:
-        """Serialize `payload` as JSON and send it to every connected client."""
+        """Serialize `payload` as JSON and send it concurrently to every
+        connected client. A slow/stalled client (bounded by SEND_TIMEOUT_S)
+        cannot delay delivery to the rest.
+        """
         message = json.dumps(payload)
         async with self._lock:
             clients = set(self._clients)
         if not clients:
             return
-        dead = set()
-        for ws in clients:
+
+        async def _send(ws) -> Optional[Any]:
             try:
-                await ws.send(message)
+                await asyncio.wait_for(ws.send(message), timeout=self.SEND_TIMEOUT_S)
+                return None
             except Exception:
-                dead.add(ws)
+                return ws
+
+        results = await asyncio.gather(*(_send(ws) for ws in clients))
+        dead = {ws for ws in results if ws is not None}
         if dead:
             async with self._lock:
                 self._clients.difference_update(dead)
@@ -65,9 +74,14 @@ class BroadcastWsServer:
             self._clients.add(websocket)
         try:
             if self._on_client_connect is not None:
-                result = self._on_client_connect(websocket)
-                if inspect.isawaitable(result):
-                    await result
+                try:
+                    result = self._on_client_connect(websocket)
+                    if inspect.isawaitable(result):
+                        await result
+                except ConnectionClosed:
+                    raise
+                except Exception:
+                    logger.warning("on_client_connect handler failed", exc_info=True)
             async for raw in websocket:
                 if self._on_client_message is None:
                     continue
@@ -77,6 +91,8 @@ class BroadcastWsServer:
                         result = await result
                     if result:
                         await websocket.send(result)
+                except ConnectionClosed:
+                    raise
                 except Exception:
                     logger.warning("on_client_message handler failed", exc_info=True)
         except ConnectionClosed:

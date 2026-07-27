@@ -339,6 +339,10 @@ class AutoNavLoop:
         self._waypoints = waypoints
         self._original_waypoints = list(waypoints)
         self._status_queue = status_queue
+        # Guards _waypoints/_original_waypoints: written from the asyncio
+        # event loop thread (cmd_load_waypoints/cmd_set_offset), read from
+        # the HTTP server's background thread (GET /export_csv).
+        self._waypoints_lock = threading.Lock()
 
         self._state = "idle"
         self._paused_by_timeout = False
@@ -376,10 +380,14 @@ class AutoNavLoop:
         self._state = "running"
 
     def cmd_restart(self) -> None:
+        if not self._waypoints:
+            logger.warning("cmd_restart: no waypoints loaded")
+            return
         if self._state not in ("idle", "paused", "arrived"):
             logger.warning("cmd_restart: refused in state=%s", self._state)
             return
         self._wp_idx = 0
+        self._paused_by_timeout = False
         self.reset()
         self._state = "running"
 
@@ -426,8 +434,9 @@ class AutoNavLoop:
 
     async def cmd_load_waypoints(self, waypoints: List[dict]) -> None:
         await self.cmd_stop()
-        self._original_waypoints = list(waypoints)
-        self._waypoints = algo.apply_offset_to_waypoints(waypoints, self._offset_m)
+        with self._waypoints_lock:
+            self._original_waypoints = list(waypoints)
+            self._waypoints = algo.apply_offset_to_waypoints(waypoints, self._offset_m)
         self._wp_idx = 0
 
     async def cmd_pause(self) -> None:
@@ -468,7 +477,8 @@ class AutoNavLoop:
 
     def cmd_set_offset(self, offset_m: float) -> None:
         self._offset_m = max(-5.0, min(5.0, offset_m))
-        self._waypoints = algo.apply_offset_to_waypoints(self._original_waypoints, self._offset_m)
+        with self._waypoints_lock:
+            self._waypoints = algo.apply_offset_to_waypoints(self._original_waypoints, self._offset_m)
 
     def set_pause_mode(self, mode: str) -> None:
         if mode in ("all", "type"):
@@ -558,16 +568,19 @@ class AutoNavLoop:
             return linear * speed_ratio, angular * speed_ratio
         return 0.0, 0.0
 
-    def _get_wp_window(self, window: int = 7) -> List[dict]:
-        n = len(self._waypoints)
+    def _get_wp_window(self, window: int = 7, waypoints: Optional[List[dict]] = None,
+                        wp_idx: Optional[int] = None) -> List[dict]:
+        wps = self._waypoints if waypoints is None else waypoints
+        idx = self._wp_idx if wp_idx is None else wp_idx
+        n = len(wps)
         if n == 0:
             return []
         half = window // 2
-        start = max(0, self._wp_idx - half)
+        start = max(0, idx - half)
         end = min(n, start + window)
         start = max(0, end - window)
         return [
-            {"idx": i, "lat": self._waypoints[i]["lat"], "lon": self._waypoints[i]["lon"], "current": i == self._wp_idx}
+            {"idx": i, "lat": wps[i]["lat"], "lon": wps[i]["lon"], "current": i == idx}
             for i in range(start, end)
         ]
 
@@ -622,6 +635,13 @@ class AutoNavLoop:
         elif self._state == "lifting":
             linear, angular, _ = await self._handle_lifting()
 
+        # Snapshot after this tick's own waypoint-progress mutation but before
+        # the next await point, so a concurrently-processed load_csv/set_offset
+        # WS message can't make the broadcast status mix this tick's
+        # dist_m/bearing_deg with a waypoint list/index from a later tick.
+        waypoints_snapshot = self._waypoints
+        wp_idx_snapshot = self._wp_idx
+
         send_linear, send_angular = self._scaled_robot_command(
             self._state, linear, angular, self._manual_linear, self._speed_ratio
         )
@@ -630,6 +650,7 @@ class AutoNavLoop:
         status = _build_autonav_status(
             self, heading, lat, lon, gps_age, gps_packet_age, imu_age,
             linear, angular, dist_m, bearing_deg, imu_raw, rtk_raw,
+            waypoints_snapshot, wp_idx_snapshot,
         )
         try:
             self._status_queue.put_nowait(status)
@@ -640,14 +661,19 @@ class AutoNavLoop:
 def _build_autonav_status(loop: AutoNavLoop, heading: Optional[float], lat: Optional[float], lon: Optional[float],
                            gps_age: float, gps_packet_age: float, imu_age: float,
                            linear: float, angular: float, dist_m: float, bearing_deg: float,
-                           imu_raw: dict, rtk_raw: dict) -> dict:
+                           imu_raw: dict, rtk_raw: dict, waypoints: List[dict], wp_idx: int) -> dict:
+    """`waypoints`/`wp_idx` are the snapshot _tick() took at the top of this
+    control cycle, so a concurrently-processed load_csv/set_offset WS message
+    can't make this status frame mix stale dist_m/bearing_deg (computed
+    against the old waypoints) with a fresh total_wp/path_offset.
+    """
     heading_val = heading if heading is not None else 0.0
     bearing_error = (bearing_deg - heading_val + 180) % 360 - 180
     return {
         "type": "autonav_status", "version": WS_MSG_VERSION,
         "state": loop._state,
-        "current_wp_idx": loop._wp_idx,
-        "total_wp": len(loop._waypoints),
+        "current_wp_idx": wp_idx,
+        "total_wp": len(waypoints),
         "heading_deg": heading,
         "target_bearing_deg": round(bearing_deg, 1),
         "bearing_error_deg": round(bearing_error, 1),
@@ -663,9 +689,9 @@ def _build_autonav_status(loop: AutoNavLoop, heading: Optional[float], lat: Opti
         "speed_ratio": loop._speed_ratio,
         "manual_speed": MANUAL_SPEED,
         "calib": loop.calib_status(),
-        "waypoints_window": loop._get_wp_window(),
+        "waypoints_window": loop._get_wp_window(waypoints=waypoints, wp_idx=wp_idx),
         "waiting_at_wp": loop._waiting_at_wp,
-        "waiting_wp_idx": loop._wp_idx if loop._waiting_at_wp else None,
+        "waiting_wp_idx": wp_idx if loop._waiting_at_wp else None,
         "pause_mode": loop._pause_mode,
         "lift_cmd": loop._lift_cmd if loop._state == "lifting" else "",
         "lift_remaining_s": (
@@ -675,7 +701,7 @@ def _build_autonav_status(loop: AutoNavLoop, heading: Optional[float], lat: Opti
         "lift_down_s": loop._lift_down_s,
         "offset_m": loop._offset_m,
         "path_original": _downsample_path(loop._original_waypoints),
-        "path_offset": _downsample_path(loop._waypoints),
+        "path_offset": _downsample_path(waypoints),
         "robot_lat": lat,
         "robot_lon": lon,
         "imu_raw": imu_raw,
@@ -717,8 +743,9 @@ class AutoNavBridge:
     def _generate_export_csv(self) -> str:
         lines = ["index,orig_lat,orig_lon,offset_lat,offset_lon,type,lift"]
         if self._nav_loop is not None:
-            orig = self._nav_loop._original_waypoints
-            offset = self._nav_loop._waypoints
+            with self._nav_loop._waypoints_lock:
+                orig = list(self._nav_loop._original_waypoints)
+                offset = list(self._nav_loop._waypoints)
             for i, (o, w) in enumerate(zip(orig, offset)):
                 lines.append(
                     f"{i},{o['lat']:.8f},{o['lon']:.8f},{w['lat']:.8f},{w['lon']:.8f},"

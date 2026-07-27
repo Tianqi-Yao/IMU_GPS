@@ -9,12 +9,24 @@ Run: python listen_imu_websocket.py
 
 import asyncio
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import websockets
 
-WS_URL = "ws://localhost:8766"
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
+from common.ports import derive_ws_port
+
+DEFAULT_HTTP_PORT = _cfg.IMU_WS_PORT if _cfg else 8765
+WS_URL = f"ws://localhost:{derive_ws_port(DEFAULT_HTTP_PORT)}"
 DATA_LOG_DIR = Path(__file__).parent / "data_log"
 
 

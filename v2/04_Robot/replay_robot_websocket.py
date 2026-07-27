@@ -5,6 +5,14 @@ robot_bridge.py normally uses. By default replays the most recently
 recorded file (falls back to the bundled robot_raw_v1.jsonl baseline
 sample, whose schema matches Recorder._slim's odom/imu/rtk output).
 
+Recorder._slim() flattens imu/rtk fields for human-readable summary logs
+(e.g. "heading_deg"/"heading_dir" instead of a nested "heading" object),
+but real consumers of the live WS feed (listen_robot_websocket.py, any
+frontend code) expect the original nested imu_frame/rtk_frame shape. This
+script reconstructs that nested shape before broadcasting, so replayed
+data is a drop-in stand-in for the live bridge regardless of which of the
+two on-disk shapes the recording happens to be in.
+
 Run: python replay_robot_websocket.py
 """
 
@@ -20,8 +28,8 @@ DATA_LOG_DIR = Path(__file__).parent / "data_log"
 
 
 def _find_latest_jsonl(directory: Path) -> Optional[Path]:
-    files = sorted(directory.glob("*.jsonl"))
-    return files[-1] if files else None
+    files = list(directory.glob("*.jsonl"))
+    return max(files, key=lambda p: p.stat().st_mtime, default=None)
 
 
 INPUT_PATH = _find_latest_jsonl(DATA_LOG_DIR)
@@ -32,6 +40,38 @@ LOOP_FOREVER = True
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def _reconstruct_live_schema(obj: dict) -> dict:
+    """Rebuild the nested euler/heading (imu) or available/hdop/... (rtk)
+    fields that Recorder._slim() flattens away. No-op if the record already
+    has the nested shape (e.g. captured directly by listen_robot_websocket.py
+    rather than produced by Recorder).
+    """
+    msg_type = obj.get("type")
+    if msg_type == "imu" and "euler" not in obj:
+        obj = dict(obj)
+        obj["euler"] = {
+            "roll": obj.pop("roll", None),
+            "pitch": obj.pop("pitch", None),
+            "yaw": obj.pop("yaw", None),
+        }
+        obj["heading"] = {
+            "deg": obj.pop("heading_deg", None),
+            "dir": obj.pop("heading_dir", None),
+            "raw": None,
+        }
+    elif msg_type == "rtk" and "available" not in obj:
+        obj = dict(obj)
+        # Matches robot_bridge.py's live `available` formula exactly. Recordings
+        # made before Recorder._slim() started keeping "source" fall back to
+        # the fix_quality-only half of the formula (obj.get("source") is None).
+        obj["available"] = bool(obj.get("source") == "rtk" or (obj.get("fix_quality") or 0) > 0)
+        obj.setdefault("hdop", None)
+        obj.setdefault("speed_knots", None)
+        obj.setdefault("track_deg", None)
+        obj.setdefault("source", None)
+    return obj
 
 
 def _load_jsonl(path: Path) -> List[str]:
@@ -49,6 +89,10 @@ def _load_jsonl(path: Path) -> List[str]:
             except json.JSONDecodeError:
                 skipped += 1
                 continue
+            if not isinstance(obj, dict):
+                skipped += 1
+                continue
+            obj = _reconstruct_live_schema(obj)
             rows.append(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
     if skipped:
         logger.warning("Skipped %d malformed line(s) in %s", skipped, path)
@@ -74,7 +118,7 @@ async def _run_server(records: List[str], host: str, port: int, hz: float, loop_
             for raw in records:
                 if clients:
                     dead = set()
-                    for ws in clients:
+                    for ws in list(clients):
                         try:
                             await ws.send(raw)
                         except websockets.exceptions.ConnectionClosed:

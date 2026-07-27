@@ -110,6 +110,14 @@ current waypoint). This is a deliberate, validated simplification; the
 `calib_apply`, `manual_drive{linear}`, `confirm_wp`, `set_pause_mode{mode}`,
 `lift_control{cmd}`, `set_lift_duration{up_s,down_s}`, `set_offset{offset_m}`.
 
+**Note**: `pause`/`resume`/`resume_result` are fully implemented in
+`autonav_bridge.py`, but the bundled `web_static/app.js` dashboard does not
+expose any button for them and ignores `resume_result` messages — today
+the only way `paused` is entered/exited is the automatic sensor/robot-link
+timeout path (see "Auto-pause" above). Sending `pause`/`resume` over the
+WebSocket directly (e.g. from a custom client) works as documented; there
+is just no UI affordance for it yet.
+
 ## Waypoint file (`path.csv`)
 
 Only `lat`/`lon`/`type`/`lift` columns are consumed (`type` is currently

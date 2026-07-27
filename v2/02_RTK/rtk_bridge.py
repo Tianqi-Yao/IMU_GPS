@@ -138,28 +138,43 @@ class NMEAPipeline:
     def _parse_gga(self, fields: list) -> None:
         if len(fields) < 11:
             return
-        lat = self._nmea_to_decimal(fields[2], fields[3]) if fields[2] and fields[3] else None
-        lon = self._nmea_to_decimal(fields[4], fields[5]) if fields[4] and fields[5] else None
-        fix_quality = int(fields[6]) if fields[6] else 0
-        num_sats = int(fields[7]) if fields[7] else 0
-        hdop = float(fields[8]) if fields[8] else None
-        alt = float(fields[9]) if fields[9] else None
+        try:
+            lat = self._nmea_to_decimal(fields[2], fields[3]) if fields[2] and fields[3] else None
+            lon = self._nmea_to_decimal(fields[4], fields[5]) if fields[4] and fields[5] else None
+            fix_quality = int(fields[6]) if fields[6] else None
+            num_sats = int(fields[7]) if fields[7] else None
+            hdop = float(fields[8]) if fields[8] else None
+            alt = float(fields[9]) if fields[9] else None
+        except (ValueError, IndexError) as exc:
+            logger.warning("Failed to parse GGA sentence: %s — fields=%s", exc, fields)
+            return
+        # A sentence with a transiently-empty subfield (weak-signal receiver
+        # hiccup) keeps the last known-good value instead of blanking it out,
+        # same policy as lat/lon.
         with self._lock:
             if lat is not None:
                 self._frame.lat = lat
             if lon is not None:
                 self._frame.lon = lon
-            self._frame.alt = alt
-            self._frame.fix_quality = fix_quality
-            self._frame.num_sats = num_sats
-            self._frame.hdop = hdop
+            if alt is not None:
+                self._frame.alt = alt
+            if fix_quality is not None:
+                self._frame.fix_quality = fix_quality
+            if num_sats is not None:
+                self._frame.num_sats = num_sats
+            if hdop is not None:
+                self._frame.hdop = hdop
             self._frame.rtk_ts = time.time()
 
     def _parse_rmc(self, fields: list) -> None:
         if len(fields) < 9 or fields[2] != "A":
             return
-        speed_knots = float(fields[7]) if fields[7] else None
-        track_deg = float(fields[8]) if fields[8] else None
+        try:
+            speed_knots = float(fields[7]) if fields[7] else None
+            track_deg = float(fields[8]) if fields[8] else None
+        except (ValueError, IndexError) as exc:
+            logger.warning("Failed to parse RMC sentence: %s — fields=%s", exc, fields)
+            return
         with self._lock:
             self._frame.speed_knots = speed_knots
             self._frame.track_deg = track_deg

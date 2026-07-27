@@ -122,7 +122,20 @@ class IMUPipeline:
 
     def __init__(self, hz_tracker: FrameRateTracker, north_offset_deg: float = 0.0) -> None:
         self._hz_tracker = hz_tracker
-        self.north_offset_deg = north_offset_deg
+        self._north_offset_deg = north_offset_deg
+        # Written from the asyncio event loop thread (set_north_offset
+        # control message), read from the serial reader thread (_parse).
+        self._north_offset_lock = threading.Lock()
+
+    @property
+    def north_offset_deg(self) -> float:
+        with self._north_offset_lock:
+            return self._north_offset_deg
+
+    @north_offset_deg.setter
+    def north_offset_deg(self, value: float) -> None:
+        with self._north_offset_lock:
+            self._north_offset_deg = value
 
     def process(self, raw_line: str) -> Optional[dict]:
         frame = self._parse(raw_line)

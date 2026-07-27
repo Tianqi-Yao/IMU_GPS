@@ -44,13 +44,13 @@ class RtkSample:
 
 
 def _find_latest_run_file() -> Path:
-    files = sorted(ROBOT_DATA_LOG_DIR.glob("run_*.jsonl"))
+    files = list(ROBOT_DATA_LOG_DIR.glob("run_*.jsonl"))
     if not files:
         raise FileNotFoundError(
             f"No run_*.jsonl files found in {ROBOT_DATA_LOG_DIR}. "
             "Record a manual run first via robot_bridge.py's recording feature."
         )
-    return files[-1]
+    return max(files, key=lambda p: p.stat().st_mtime)
 
 
 def _load_rtk_samples(path: Path) -> List[RtkSample]:

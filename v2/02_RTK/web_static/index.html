@@ -13,7 +13,6 @@
       <span class="dot" id="statusDot"></span>
       <span id="statusText">Disconnected</span>
     </div>
-    <button id="langToggle" class="lang-toggle" title="Switch to Chinese" aria-label="Switch language">◌</button>
   </header>
 
   <section class="toolbar">
@@ -81,7 +80,9 @@
 
   <script>
     const rawJson = document.getElementById('raw-json');
-    const wsData = new WebSocket('ws://localhost:8776');
+    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsPort = Number(location.port || 8775) + 1;
+    const wsData = new WebSocket(`${wsProto}://${location.hostname}:${wsPort}`);
     wsData.onmessage = e => { rawJson.textContent = JSON.stringify(JSON.parse(e.data), null, 2); };
   </script>
 

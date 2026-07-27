@@ -1,3 +1,8 @@
+// Map center used only before the WS connection delivers any frame (or while
+// every frame so far is still the server's config.py fallback coordinate,
+// source:"default"). Once a real fix arrives, updateByFrame() recenters the
+// map — this constant is a startup placeholder, not a synced copy of
+// config.py's RTK_DEFAULT_LAT/LON.
 const DEFAULT_POS = [38.9412928598587, -92.31884600793728];
 const WS_URL = `ws://${window.location.hostname}:${Number(window.location.port || 8775) + 1}`;
 const STRINGS = {
@@ -17,19 +22,13 @@ findMe: 'Find Me',
   clearTrack: 'Clear Track',
   exportLog: 'Export Log',
   cardCurrent: 'Current Position',
-  cardDual: 'Dual RTK Status',
   latitude: 'Latitude',
   longitude: 'Longitude',
   source: 'Source',
   heading: 'Heading',
-  baseline: 'Baseline',
   fix: 'Fix',
   satellites: 'Satellites',
   speed: 'Speed',
-  online: 'Online',
-  offline: 'Offline',
-  noFix: 'No Fix',
-  headingInvalid: 'invalid',
   cardMission: 'Mission Progress',
   reached: 'Reached Waypoints',
   target: 'Current Target',
@@ -662,7 +661,7 @@ function updateByFrame(frame) {
   const point = [lat, lon];
   currentMarker.setLatLng(point);
 
-  if (!hasFirstFix && frame.source === 'rtk') {
+  if (!hasFirstFix && frame.source !== 'default') {
     hasFirstFix = true;
     console.log('First RTK fix, moving map to', point);
     map.setView(point, map.getZoom());

@@ -75,7 +75,7 @@ logger = setup_logger(__name__, str(Path(__file__).parent / "camera_bridge.log")
 # ══════════════════════════════════════════════════════════════════════════
 @dataclass
 class CameraFrame:
-    cam_selection: str
+    cam_selection: int
     streaming: bool
     fps: float
     width: int
@@ -90,7 +90,7 @@ class CameraFrame:
     cam2_fps: float
     active_plugin: str
     active_plugin_config: dict
-    available_plugins: List[str]
+    available_plugins: List[dict]
     available_streams: List[str]
 
     def to_dict(self) -> dict:
@@ -169,13 +169,13 @@ class CameraDevice:
             pipeline = dai.Pipeline(self._device)
             self._pipeline = pipeline
 
-            cam_rgb = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket(self._RGB_SOCKET))
+            cam_rgb = pipeline.create(dai.node.Camera).build(getattr(dai.CameraBoardSocket, self._RGB_SOCKET))
             rgb_out = cam_rgb.requestOutput(size=(self._width, self._height), fps=float(self._fps))
             self._queues["rgb"] = rgb_out.createOutputQueue(maxSize=1, blocking=False)
 
             if self._enable_stereo:
-                cam_left = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket(self._LEFT_SOCKET))
-                cam_right = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket(self._RIGHT_SOCKET))
+                cam_left = pipeline.create(dai.node.Camera).build(getattr(dai.CameraBoardSocket, self._LEFT_SOCKET))
+                cam_right = pipeline.create(dai.node.Camera).build(getattr(dai.CameraBoardSocket, self._RIGHT_SOCKET))
                 stereo = pipeline.create(dai.node.StereoDepth)
                 stereo.setExtendedDisparity(True)
                 left_out = cam_left.requestOutput(size=(640, 400), fps=float(self._fps))
@@ -215,16 +215,29 @@ class CameraDevice:
             q = self._queues.get(name)
             if q is None:
                 continue
-            pkt = q.tryGet()
-            if pkt is not None:
-                has_new_frame = True
+            try:
+                pkt = q.tryGet()
+            except Exception:
+                logger.warning("Failed to read packet from stream '%s'", name, exc_info=True)
+                continue
+            if pkt is None:
+                continue
+            has_new_frame = True
+            try:
                 raw = pkt.getCvFrame()
-                self._last_raw_frames[name] = raw
-                if name in ("depth", "disparity") and raw.ndim == 2:
+            except Exception:
+                logger.warning("Failed to decode frame from stream '%s'", name, exc_info=True)
+                continue
+            self._last_raw_frames[name] = raw
+            if name in ("depth", "disparity") and raw.ndim == 2:
+                try:
                     normalized = cv2.normalize(raw, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
                     self._last_frames[name] = cv2.applyColorMap(normalized, cv2.COLORMAP_JET)
-                else:
+                except Exception:
+                    logger.warning("Failed to colorize stream '%s'; using raw frame", name, exc_info=True)
                     self._last_frames[name] = raw
+            else:
+                self._last_frames[name] = raw
         return {name: self._last_frames.get(name) for name in stream_names}, has_new_frame
 
     def available_streams(self) -> List[str]:
@@ -263,6 +276,7 @@ class MJPEGServer:
         self._processor_lock = threading.Lock()
 
         self._latest_output_frame: Optional[np.ndarray] = None
+        self._output_shape: Optional[Tuple[int, int]] = None  # (height, width) of the last encoded frame
         self._output_lock = threading.Lock()
 
         self._httpd: Optional[socketserver.ThreadingTCPServer] = None
@@ -297,6 +311,17 @@ class MJPEGServer:
     def get_latest_output_frame(self) -> Optional[np.ndarray]:
         with self._output_lock:
             return self._latest_output_frame
+
+    @property
+    def output_shape(self) -> Optional[Tuple[int, int]]:
+        """(height, width) of the most recently encoded frame, or None if
+        nothing has been encoded yet (e.g. camera not open, or plugin never
+        produced output). Reflects the plugin's actual rendered size, which
+        can differ from the configured capture resolution (e.g. path_cam's
+        composite mode concatenates multiple panels side by side).
+        """
+        with self._output_lock:
+            return self._output_shape
 
     def start_http(self) -> None:
         if self._running:
@@ -354,6 +379,7 @@ class MJPEGServer:
 
             with self._output_lock:
                 self._latest_output_frame = output
+                self._output_shape = output.shape[:2]
 
             if not has_new_frame:
                 time.sleep(0.003)
@@ -433,6 +459,10 @@ class CameraPipeline:
         self._active_plugin_config = dict(default_plugin_config)
         self._cam_selection = min(cam_configs.keys()) if cam_configs else 1
 
+        first_cfg = next(iter(cam_configs.values()), None)
+        self._width = first_cfg["width"] if first_cfg else DEFAULT_WIDTH
+        self._height = first_cfg["height"] if first_cfg else DEFAULT_HEIGHT
+
         for cam_id, cfg in cam_configs.items():
             self._devices[cam_id] = CameraDevice(
                 ip=cfg["ip"], fps=cfg["fps"], width=cfg["width"], height=cfg["height"],
@@ -474,6 +504,7 @@ class CameraPipeline:
     def restart_cameras(self, fps: int, width: int, height: int) -> None:
         for server in self._servers.values():
             server.stop_http()
+        self._width, self._height = width, height
         for device in self._devices.values():
             device._fps, device._width, device._height = fps, width, height
             device.close()
@@ -501,14 +532,21 @@ class CameraPipeline:
 
     def get_status(self) -> CameraFrame:
         s1, s2 = self._servers.get(1), self._servers.get(2)
-        active_fps = (s1.fps if s1 else 0.0) if self._cam_selection == 1 else (s2.fps if s2 else 0.0)
+        active_server = s1 if self._cam_selection == 1 else s2
+        active_fps = active_server.fps if active_server else 0.0
+        # Prefer the active plugin's actual rendered output size (e.g. path_cam's
+        # composite mode is wider than the capture resolution); fall back to the
+        # configured capture resolution before any frame has been encoded.
+        output_shape = active_server.output_shape if active_server else None
+        width = output_shape[1] if output_shape else self._width
+        height = output_shape[0] if output_shape else self._height
         streams: set = set()
         for device in self._devices.values():
             streams.update(device.available_streams())
         return CameraFrame(
-            cam_selection=f"cam{self._cam_selection}",
+            cam_selection=self._cam_selection,
             streaming=any(s.streaming for s in self._servers.values()),
-            fps=active_fps, width=DEFAULT_WIDTH, height=DEFAULT_HEIGHT,
+            fps=active_fps, width=width, height=height,
             mjpeg_url_cam1=f"http://{{host}}:{s1.port}/" if s1 else "",
             mjpeg_url_cam2=f"http://{{host}}:{s2.port}/" if s2 else "",
             cam1_clients=s1.client_count if s1 else 0,
@@ -519,7 +557,7 @@ class CameraPipeline:
             cam2_fps=s2.fps if s2 else 0.0,
             active_plugin=self._active_plugin_name,
             active_plugin_config=self._active_plugin_config,
-            available_plugins=[p["name"] for p in plugins.list_plugins()],
+            available_plugins=plugins.list_plugins(),
             available_streams=sorted(streams),
         )
 
@@ -619,13 +657,18 @@ class CameraBridge:
             self._pipeline.switch_camera(int(msg.get("cam_id", 1)))
         elif t == "switch_plugin":
             try:
-                self._pipeline.switch_plugin(msg.get("plugin", ""), msg.get("config", {}))
+                self._pipeline.switch_plugin(msg.get("plugin_name", ""), msg.get("config", {}))
             except KeyError as exc:
                 logger.warning("switch_plugin failed: %s", exc)
         elif t == "update_plugin_config":
             self._pipeline.update_plugin_config(msg.get("config", {}))
         elif t == "restart_cameras":
-            self._pipeline.restart_cameras(
+            # Closing/reopening the device is a blocking, potentially
+            # multi-second operation; run it off the event loop so WS
+            # message handling and status broadcasts don't stall.
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, self._pipeline.restart_cameras,
                 int(msg.get("fps", DEFAULT_FPS)), int(msg.get("width", DEFAULT_WIDTH)),
                 int(msg.get("height", DEFAULT_HEIGHT)),
             )
