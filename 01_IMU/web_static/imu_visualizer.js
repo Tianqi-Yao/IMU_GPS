@@ -228,14 +228,6 @@ function drawCompass(deg) {
   compassCtx.beginPath(); compassCtx.arc(CX, CY, 3, 0, Math.PI * 2); compassCtx.fill();
 }
 
-// ========== Heading display ==========
-const COMPASS_DIRS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
-function updateHeadingDisplay(deg, dirOverride = null) {
-  const idx = Math.round(deg / 22.5) % 16;
-  setText('heading_deg', deg.toFixed(3) + '°');
-  setText('heading_dir', dirOverride || COMPASS_DIRS[idx]);
-}
-
 function getNorthVector() {
   // World convention: +X points to North.
   return new THREE.Vector3(1, 0, 0);
@@ -310,7 +302,6 @@ function animate() {
   const displayHeadingDeg = (typeof wsHeadingDeg === 'number')
     ? wsHeadingDeg
     : (rawHeadingDeg - northOffsetDeg + 360) % 360;
-  updateHeadingDisplay(displayHeadingDeg, wsHeadingDir);
   drawCompass(displayHeadingDeg);
 
   if (topNorthView) {
@@ -323,87 +314,6 @@ function animate() {
   renderer.render(scene, camera);
 }
 animate();
-
-// ========== Data panel helpers ==========
-function setText(id, value) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = value;
-}
-
-function fmt(v, decimals = 3) {
-  if (v === undefined || v === null) return '–';
-  return Number(v).toFixed(decimals);
-}
-
-const CAL_LABELS = ['Unknown', 'Low', 'Medium', 'High'];
-const CAL_COLORS = ['cal-0', 'cal-1', 'cal-2', 'cal-3'];
-
-function updatePanel(data) {
-  // Rotation Vector
-  const rot = data.rot || {};
-  setText('rot_qi', fmt(rot.qi));
-  setText('rot_qj', fmt(rot.qj));
-  setText('rot_qk', fmt(rot.qk));
-  setText('rot_qr', fmt(rot.qr));
-
-  // Euler angles (computed by Python)
-  const euler = data.euler || {};
-  setText('euler_roll',  euler.roll  !== undefined ? fmt(euler.roll) + '°' : '–');
-  setText('euler_pitch', euler.pitch !== undefined ? fmt(euler.pitch) + '°' : '–');
-  setText('euler_yaw',   euler.yaw   !== undefined ? fmt(euler.yaw) + '°' : '–');
-
-  // Accelerometer
-  const accel = data.accel || {};
-  setText('accel_x', fmt(accel.x));
-  setText('accel_y', fmt(accel.y));
-  setText('accel_z', fmt(accel.z));
-
-  // Linear acceleration
-  const lin = data.lin_accel || {};
-  setText('lin_x', fmt(lin.x));
-  setText('lin_y', fmt(lin.y));
-  setText('lin_z', fmt(lin.z));
-
-  // Gravity
-  const grav = data.gravity || {};
-  setText('grav_x', fmt(grav.x));
-  setText('grav_y', fmt(grav.y));
-  setText('grav_z', fmt(grav.z));
-
-  // Gyroscope
-  const gyro = data.gyro || {};
-  setText('gyro_x', fmt(gyro.x));
-  setText('gyro_y', fmt(gyro.y));
-  setText('gyro_z', fmt(gyro.z));
-
-  // Game rotation
-  const game = data.game_rot || {};
-  setText('game_qi', fmt(game.qi));
-  setText('game_qj', fmt(game.qj));
-  setText('game_qk', fmt(game.qk));
-  setText('game_qr', fmt(game.qr));
-
-  // Magnetometer
-  const mag = data.mag || {};
-  setText('mag_x', fmt(mag.x));
-  setText('mag_y', fmt(mag.y));
-  setText('mag_z', fmt(mag.z));
-
-  // Steps
-  setText('steps', data.steps !== undefined ? data.steps : '–');
-
-  // Calibration badge
-  const cal = data.cal !== undefined ? data.cal : -1;
-  const calEl = document.getElementById('calBadge');
-  if (calEl) {
-    calEl.className = 'cal-badge ' + (cal >= 0 && cal <= 3 ? CAL_COLORS[cal] : 'cal-0');
-  }
-  const calLabel = cal >= 0 && cal <= 3 ? CAL_LABELS[cal] : '–';
-  setText('calText', `Cal: ${calLabel}`);
-
-  // Hz
-  setText('hzDisplay', data.hz !== undefined ? `${data.hz} Hz` : '– Hz');
-}
 
 // ========== WebSocket connection ==========
 const statusDot  = document.getElementById('statusDot');
@@ -459,9 +369,6 @@ function connect() {
         wsHeadingRaw = Number(data.heading.raw);
         rawHeadingDeg = wsHeadingRaw;
       }
-
-      // Update data panel
-      updatePanel(data);
     }
   };
 

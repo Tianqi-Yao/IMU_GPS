@@ -1,117 +1,66 @@
-#!/usr/bin/env python3
-"""
-Minimal WebSocket client to listen to aggregated Nav data from nav_bridge.py
+"""listen_nav_websocket.py — output-boundary observer / recorder for 03_Nav.
 
-Usage:
-    python listen_nav_websocket.py
+Connects to nav_bridge's WebSocket, prints a live formatted table, and logs
+every frame to data_log/nav_raw_{timestamp}.jsonl.
+
+nav_frame only ever contains "imu" and "rtk" sub-objects (nav_bridge is a
+passthrough, not a fusion module — see README.md); there is no independent
+"nav" sub-object with derived distance/heading fields, so this listener only
+reads euler/heading from "imu" and lat/lon/fix_quality from "rtk".
+
+Run: python listen_nav_websocket.py
 """
 
 import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
+
 import websockets
 
 WS_URL = "ws://localhost:8786"
+DATA_LOG_DIR = Path(__file__).parent / "data_log"
+
+FIX_QUALITY = {0: "No Fix", 1: "GPS", 2: "DGPS", 4: "RTK Fixed", 5: "RTK Float"}
 
 
-# Fix quality descriptions
-FIX_QUALITY = {
-    0: "No Fix",
-    1: "GPS",
-    2: "DGPS",
-    4: "RTK Fixed",
-    5: "RTK Float",
-}
+async def listen(ws_url: str) -> None:
+    DATA_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = DATA_LOG_DIR / f"nav_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+    print(f"Logging to {log_path}")
+    print(f"{'Roll':>7} | {'Pitch':>7} | {'Yaw':>7} | {'Lat':>12} | {'Lon':>13} | Fix")
+
+    with log_path.open("a", encoding="utf-8") as log_file:
+        async with websockets.connect(ws_url) as ws:
+            async for raw in ws:
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                data = json.loads(raw)
+
+                recv_dt = datetime.now()
+                data["log_recv_ts"] = recv_dt.timestamp()
+                data["log_recv_iso"] = recv_dt.isoformat(timespec="milliseconds")
+                log_file.write(json.dumps(data, ensure_ascii=False) + "\n")
+                log_file.flush()
+
+                euler = data.get("imu", {}).get("euler", {})
+                rtk = data.get("rtk", {})
+                fix_label = FIX_QUALITY.get(rtk.get("fix_quality", 0), str(rtk.get("fix_quality")))
+                print(
+                    f"{euler.get('roll', 0):>7.2f} | {euler.get('pitch', 0):>7.2f} | "
+                    f"{euler.get('yaw', 0):>7.2f} | {rtk.get('lat', 0):>12.7f} | "
+                    f"{rtk.get('lon', 0):>13.7f} | {fix_label}"
+                )
 
 
-async def listen_nav(ws_url: str):
-    """Connect to nav_bridge.py WebSocket and listen for aggregated nav data."""
-    print(f"Connecting to {ws_url}...")
-
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_log_path = Path(__file__).parent / "data_log" / f"nav_raw_{ts}.jsonl"
-    raw_log_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Raw log file: {raw_log_path}")
-
+def main() -> None:
     try:
-        async with websockets.connect(ws_url) as websocket:
-            print("✓ Connected!")
-            print("\nReceiving Navigation data...\n")
-            print("=" * 140)
-            print("IMU (Euler)           | RTK Position         | RTK Fix       | Navigation State")
-            print("-" * 140)
-            print("Roll  | Pitch | Yaw   | Lat (°)      | Lon (°)       | Fix Type   | Dist (m) | Heading  | Dir | Src")
-            print("-" * 140)
-
-            frame_count = 0
-            with raw_log_path.open("a", encoding="utf-8") as raw_log_file:
-                async for message in websocket:
-                    try:
-                        raw_text = message.decode("utf-8", errors="replace") if isinstance(message, bytes) else str(message)
-                        recv_dt = datetime.now()
-                        recv_ts_iso = recv_dt.isoformat(timespec="milliseconds")
-                        recv_ts_epoch = recv_dt.timestamp()
-
-                        data = json.loads(raw_text)
-                        data["log_recv_ts"] = recv_ts_epoch
-                        data["log_recv_iso"] = recv_ts_iso
-
-                        raw_log_file.write(json.dumps(data, ensure_ascii=False))
-                        raw_log_file.write("\n")
-                        raw_log_file.flush()
-
-                        # Extract IMU data
-                        imu = data.get("imu", {})
-                        imu_euler = imu.get("euler", {})
-                        roll = imu_euler.get("roll")
-                        pitch = imu_euler.get("pitch")
-                        yaw = imu_euler.get("yaw")
-
-                        # Extract RTK data
-                        rtk = data.get("rtk", {})
-                        lat = rtk.get("lat")
-                        lon = rtk.get("lon")
-                        fix_quality = rtk.get("fix_quality", 0)
-
-                        # Extract Nav data
-                        nav = data.get("nav", {})
-                        distance_m = nav.get("target_distance_m")
-                        heading_deg = nav.get("heading_deg")
-                        heading_dir = nav.get("heading_dir", "N/A")
-                        heading_source = nav.get("heading_source", "N/A")
-
-                        # Format output
-                        lat_str = f"{lat:.8f}" if lat is not None else "N/A"
-                        lon_str = f"{lon:.8f}" if lon is not None else "N/A"
-                        roll_str = f"{roll:6.2f}°" if roll is not None else "   N/A"
-                        pitch_str = f"{pitch:6.2f}°" if pitch is not None else "   N/A"
-                        yaw_str = f"{yaw:6.2f}°" if yaw is not None else "   N/A"
-                        fix_str = FIX_QUALITY.get(fix_quality, f"Unknown({fix_quality})")
-                        dist_str = f"{distance_m:.1f}" if distance_m is not None else "N/A"
-                        heading_str = f"{heading_deg:.1f}" if heading_deg is not None else "N/A"
-
-                        print(
-                            f"{roll_str} | {pitch_str} | {yaw_str} | "
-                            f"{lat_str} | {lon_str} | "
-                            f"{fix_str:<10} | {dist_str:>7} | {heading_str:>6}° | {heading_dir:>4} | {heading_source:>6}"
-                        )
-
-                        frame_count += 1
-
-                    except json.JSONDecodeError as e:
-                        print(f"JSON decode error: {e}")
-                    except Exception as e:
-                        print(f"Error processing data: {e}")
-
+        asyncio.run(listen(WS_URL))
     except ConnectionRefusedError:
-        print(f"✗ Connection refused. Make sure nav_bridge.py is running on {ws_url}")
-    except Exception as e:
-        print(f"✗ Connection error: {e}")
+        print(f"Could not connect to {WS_URL} — is nav_bridge.py running?")
+    except KeyboardInterrupt:
+        print("Stopped")
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(listen_nav(WS_URL))
-    except KeyboardInterrupt:
-        print("\n✓ Stopped")
+    main()

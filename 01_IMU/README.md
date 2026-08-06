@@ -1,91 +1,105 @@
-# 01_IMU — Output Field Reference
+# 01_IMU — BNO085 Attitude Bridge
 
-WebSocket output frame (`ws://localhost:8766`), broadcast at ~50 Hz.
+Reads orientation data from a BNO085 IMU (via an ESP32C3 running
+`bno085_esp32c3/bno085_esp32c3.ino`) over USB serial, and broadcasts it as
+JSON over WebSocket for any downstream consumer (browser dashboard,
+03_Nav, 05_AutoNav).
 
-## Top-level fields
+## Architecture
 
-| Field | Unit | Description |
-|-------|------|-------------|
-| `type` | — | Always `"imu_frame"` |
-| `version` | — | Protocol version, currently `1` |
-| `hz` | Hz | Actual frame rate measured on the bridge |
-| `ts` | ms | Timestamp from the ESP32 (milliseconds since boot, not wall clock) |
-| `cal` | 0–3 | BNO085 calibration status. `3` = fully calibrated, `0` = uncalibrated |
-| `steps` | count | Step counter from BNO085 (pedestrian use, not relevant for robot) |
+- **INPUT** — `SerialReader._read_loop`: reads newline-delimited compact-JSON
+  lines from the serial port in a dedicated daemon thread, retries the
+  serial connection every 3s if the device disappears.
+- **CORE** — `IMUPipeline.process`: `_parse` -> `_enrich_euler` ->
+  `_enrich_heading` -> `_enrich_hz`. Pure functions on plain dicts/dataclasses,
+  no socket or serial state — can be unit tested with recorded strings alone.
+- **OUTPUT** — `common.ws_server.BroadcastWsServer` broadcasts `imu_frame`
+  payloads; `common.http_server.StaticFileServer` serves `web_static/`.
 
-## `rot` — Rotation Vector (magnetic north referenced)
+## Wire protocol: firmware -> bridge (serial)
 
-Quaternion from the BNO085 rotation vector sensor report. Uses magnetometer, so it references magnetic north.
+The ESP32C3 firmware emits a **compact, positionally-encoded** JSON line to
+fit the 256-byte USB CDC-ACM buffer:
 
-| Field | Description |
-|-------|-------------|
-| `qi` `qj` `qk` | Vector part of quaternion (i, j, k components) |
-| `qr` | Scalar part of quaternion |
+```json
+{"t":123456,"r":[qi,qj,qk,qr,acc],"g":[qi,qj,qk,qr],"a":[x,y,z],"l":[x,y,z],"v":[x,y,z],"w":[x,y,z],"m":[x,y,z],"s":0,"c":3}
+```
 
-## `euler` — Euler Angles
+| key | meaning | expands to |
+|---|---|---|
+| `t` | timestamp (ms) | `ts` |
+| `r` | rotation vector quaternion + accuracy | `rot` `{qi,qj,qk,qr,acc}` |
+| `g` | game rotation vector (no magnetometer) | `game_rot` `{qi,qj,qk,qr}` |
+| `a` | accelerometer | `accel` `{x,y,z}` |
+| `l` | linear acceleration | `lin_accel` `{x,y,z}` |
+| `v` | gravity vector | `gravity` `{x,y,z}` |
+| `w` | gyroscope | `gyro` `{x,y,z}` |
+| `m` | magnetometer | `mag` `{x,y,z}` |
+| `s` | step counter | `steps` |
+| `c` | calibration status (0-3) | `cal` |
 
-Derived from `rot` quaternion. ZYX convention.
+This is an implicit contract between the firmware and the bridge based on
+**array position, not key names** — if either side changes the array order
+independently, values silently misalign. Lines starting with `#` are
+firmware debug comments and are skipped by the parser.
 
-| Field | Unit | Description |
-|-------|------|-------------|
-| `roll` | deg | Rotation around X axis (left/right tilt) |
-| `pitch` | deg | Rotation around Y axis (forward/back tilt) |
-| `yaw` | deg | Rotation around Z axis (0 = sensor's reference, not necessarily north) |
-| `north_offset_deg` | deg | Calibration offset applied to heading (set via browser UI) |
+## Output contract (WebSocket, `imu_frame`)
 
-## `heading` — Magnetic Heading
+```json
+{
+  "type": "imu_frame", "version": 1,
+  "rot": {"qi": 0.0, "qj": 0.0, "qk": 0.0, "qr": 1.0},
+  "euler": {"roll": 0.0, "pitch": 0.0, "yaw": 0.0, "north_offset_deg": 0.0},
+  "heading": {"raw": 0.0, "deg": 0.0, "dir": "N"},
+  "hz": 50.0,
+  "accel": {"x": 0.0, "y": 0.0, "z": 9.8},
+  "lin_accel": {"x": 0.0, "y": 0.0, "z": 0.0},
+  "gravity": {"x": 0.0, "y": 0.0, "z": 9.8},
+  "gyro": {"x": 0.0, "y": 0.0, "z": 0.0},
+  "mag": {"x": 0.0, "y": 0.0, "z": 0.0},
+  "cal": 3, "steps": 0, "ts": 123456
+}
+```
 
-Derived from `rot` quaternion, corrected by `north_offset_deg`. This is the primary heading output for navigation.
+- `euler.yaw` is the raw compass-agnostic yaw derived directly from the
+  rotation-vector quaternion (server convention: `corrected = raw + north_offset_deg`).
+- `heading.deg`/`heading.dir` are a separate, web-aligned compass heading
+  computed from `game_rot` (falls back to `rot`), with the same BNO085
+  Z-up -> Three.js Y-up frame correction the frontend applies
+  (`frame_correction = (-sqrt(0.5), 0, 0, sqrt(0.5))`), so backend and
+  frontend headings stay numerically consistent.
+- **Frontend sign convention differs from the backend**: the browser displays
+  `display = raw - north_offset_deg`, while the server computes
+  `corrected = raw + north_offset_deg`. When syncing offsets in either
+  direction, convert with `frontend_offset = (360 - server_offset) % 360`.
 
-| Field | Unit | Description |
-|-------|------|-------------|
-| `raw` | deg | Heading before north offset correction |
-| `deg` | deg | Heading after correction (0 = North, 90 = East, 180 = South, 270 = West) |
-| `dir` | — | 16-point compass label (N, NNE, NE, ENE, E, …) |
+## Control message (browser -> bridge)
 
-## `game_rot` — Game Rotation Vector (no magnetometer)
+```json
+{"set_north_offset": 42.5}
+```
 
-Quaternion from the BNO085 game rotation vector report. Does **not** use the magnetometer — yaw drifts over time but is immune to magnetic interference.
+Sets the server-side `north_offset_deg` used for all subsequent heading/yaw
+calculations (in-field compass calibration). Not broadcast back; applies
+only to internal pipeline state.
 
-| Field | Description |
-|-------|-------------|
-| `qi` `qj` `qk` | Vector part |
-| `qr` | Scalar part |
+## Record / replay
 
-## `accel` — Accelerometer
+- `listen_imu_websocket.py` — connects to the live WS, prints a table, and
+  logs every frame (with `log_recv_ts`/`log_recv_iso` added) to
+  `data_log/imu_raw_{timestamp}.jsonl`.
+- `replay_imu_websocket.py` — broadcasts the most recently recorded
+  `data_log/*.jsonl` file on the same WebSocket port, at a fixed 50 Hz, so
+  downstream modules can be developed without a physical IMU. `data_log/`
+  starts empty in this repo — run the bridge (or another replay source)
+  with `listen_imu_websocket.py` once to produce a baseline sample.
 
-Raw acceleration including gravity. Unit: m/s².
+## Run
 
-| Field | Description |
-|-------|-------------|
-| `x` `y` `z` | Acceleration along each sensor axis |
+```bash
+python imu_bridge.py
+```
 
-## `lin_accel` — Linear Acceleration
-
-Acceleration with gravity removed (sensor-fused). Unit: m/s². Near zero when stationary.
-
-## `gravity` — Gravity Vector
-
-Estimated gravity component only (sensor-fused). Unit: m/s². Useful for tilt estimation independent of motion.
-
-## `gyro` — Gyroscope
-
-Angular velocity. Unit: rad/s. Near zero when stationary.
-
-| Field | Description |
-|-------|-------------|
-| `x` `y` `z` | Rotation rate around each sensor axis |
-
-## `mag` — Magnetometer
-
-Raw magnetic field strength. Unit: µT. Used internally by BNO085 for heading fusion; affected by nearby ferrous metal or electronics.
-
-| Field | Description |
-|-------|-------------|
-| `x` `y` `z` | Field strength along each sensor axis |
-
-## Notes
-
-- **Which heading to use for navigation:** `heading.deg` — it is north-corrected and derived from the magnetometer-fused quaternion.
-- **`cal: 0` means the heading is unreliable.** Wave the sensor in a figure-8 to calibrate the magnetometer.
-- **`ts` is not wall clock time.** It resets on ESP32 reboot. Use `server_ts` from the RTK frame or `time.time()` on the bridge side if you need absolute time.
+Configure `IMU_SERIAL_PORT` / `IMU_BAUD` / `IMU_WS_PORT` / `IMU_NORTH_OFFSET`
+in the repo-root `config.py`. HTTP page on `IMU_WS_PORT` (default 8765),
+WebSocket on `IMU_WS_PORT + 1` (default 8766).

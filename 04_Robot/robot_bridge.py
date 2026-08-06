@@ -1,87 +1,105 @@
+"""robot_bridge.py — Feather M4 serial control bridge.
+
+INPUT  : SerialLink's reader thread splits the serial stream into lines;
+         WS client subscriptions to 01_IMU/02_RTK; browser WS messages.
+CORE   : RobotState (parses "O:"/"S:" lines into odom + auto-active state),
+         VelocityRamp (accel-limited setpoint smoothing), Watchdog
+         (heartbeat timeout -> e-stop), Recorder (rate-limited jsonl log).
+         All four are plain objects with no socket/serial handles — testable
+         standalone.
+OUTPUT : SerialLink's write_* methods (serial); common.ws_server for the
+         browser-facing broadcast; common.http_server for web_static/.
+
+Key correctness fix vs. the pre-refactor implementation: the CAN-bus state
+integer carried on every "O:" line (see CIRCUITPY/lib/farm_ng/utils/packet.py
+AmigaControlState) is now the single source of truth for `active`, re-synced
+on every "O:" line (~20 Hz). "S:ACTIVE"/"S:READY" lines are applied
+immediately too (for a snappier UI response right after a manual toggle),
+but are no longer the *only* thing that can set `active` — if the hardware
+silently downgrades to READY without emitting "S:READY" (e.g. a CAN safety
+interlock), the next "O:" line corrects the state within ~50ms instead of
+leaving the bridge stuck reporting a stale ACTIVE forever.
+
+Run: python robot_bridge.py
 """
-robot_bridge.py — Farm Robot serial bridge.
 
-Data flow:
-    imu_bridge(WS :8766) ──→ ImuWsClient ──→ broadcast {type: "imu", ...} to browsers
-    rtk_bridge(WS :8776) ──→ RtkWsClient ──→ broadcast {type: "rtk", ...} to browsers
+import asyncio
+import json
+import sys
+import threading
+import time
+import webbrowser
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Callable, Optional
 
-    Feather M4 serial ← _send_velocity()  ← joystick commands from browser
-                      → O: odometry lines → _odom_broadcast_loop() 20Hz → browsers
-                      → S:ACTIVE/S:READY  → state_status broadcast → browsers
+import serial
+import websockets
 
-Usage:
-    python robot_bridge.py
-    # Browser:   http://localhost:8888
-    # WebSocket: ws://localhost:8889
-"""
-
-from __future__ import annotations
-
-import rootutils
-ROOT = rootutils.setup_root(__file__, indicator=".git", pythonpath=True)
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 try:
     import config as _cfg
 except ImportError:
     _cfg = None
 
-import asyncio
-import json
-import logging
-import platform
-import threading
-import time
-import webbrowser
-from datetime import datetime
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from common.http_server import StaticFileServer
+from common.logging_setup import setup_logger
+from common.ports import derive_ws_port
+from common.ws_server import BroadcastWsServer
 
-import serial
-import websockets
+WS_MSG_VERSION = 1
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger("robot_bridge")
-WS_MSG_VERSION        = 1
-DEFAULT_WS_PORT        = _cfg.ROBOT_WS_PORT        if _cfg else 8888
-DEFAULT_SERIAL_PORT    = _cfg.ROBOT_SERIAL_PORT    if _cfg else (
-    "/dev/cu.usbmodem11301" if platform.system() == "Darwin" else "/dev/ttyACM0"
-)
-DEFAULT_SERIAL_BAUD    = _cfg.ROBOT_SERIAL_BAUD    if _cfg else 115200
-DEFAULT_SERIAL_TIMEOUT = _cfg.ROBOT_SERIAL_TIMEOUT if _cfg else 1.0
-DEFAULT_MAX_LINEAR     = _cfg.ROBOT_MAX_LINEAR     if _cfg else 1.0
-DEFAULT_MAX_ANGULAR    = _cfg.ROBOT_MAX_ANGULAR    if _cfg else 1.0
-DEFAULT_MAX_LINEAR_ACCEL  = _cfg.ROBOT_MAX_LINEAR_ACCEL  if _cfg else 1.5
+# CIRCUITPY/lib/farm_ng/utils/packet.py :: AmigaControlState.STATE_AUTO_ACTIVE
+STATE_AUTO_ACTIVE = 5
+
+DEFAULT_HTTP_PORT = _cfg.ROBOT_WS_PORT if _cfg else 8888
+DEFAULT_SERIAL_PORT = _cfg.ROBOT_SERIAL_PORT if _cfg else "/dev/cu.usbmodem1301"
+DEFAULT_SERIAL_BAUD = _cfg.ROBOT_SERIAL_BAUD if _cfg else 115200
+DEFAULT_SERIAL_TIMEOUT = _cfg.ROBOT_SERIAL_TIMEOUT if _cfg else 0.05
+DEFAULT_MAX_LINEAR = _cfg.ROBOT_MAX_LINEAR if _cfg else 1.0
+DEFAULT_MAX_ANGULAR = _cfg.ROBOT_MAX_ANGULAR if _cfg else 1.0
+DEFAULT_MAX_LINEAR_ACCEL = _cfg.ROBOT_MAX_LINEAR_ACCEL if _cfg else 1.5
 DEFAULT_MAX_ANGULAR_ACCEL = _cfg.ROBOT_MAX_ANGULAR_ACCEL if _cfg else 3.0
-DEFAULT_WATCHDOG_TIMEOUT = _cfg.ROBOT_WATCHDOG_TIMEOUT if _cfg else 2.0
-DEFAULT_IMU_WS_URL     = _cfg.NAV_IMU_WS           if _cfg else "ws://localhost:8766"
-DEFAULT_RTK_WS_URL     = _cfg.NAV_RTK_WS           if _cfg else "ws://localhost:8776"
+DEFAULT_WATCHDOG_TIMEOUT = _cfg.ROBOT_WATCHDOG_TIMEOUT if _cfg else 3.0
 DEFAULT_RECORD_INTERVAL = max(0.2, _cfg.ROBOT_RECORD_INTERVAL if _cfg else 1.0)
+DEFAULT_IMU_WS_URL = _cfg.ROBOT_IMU_WS if _cfg else "ws://localhost:8766"
+DEFAULT_RTK_WS_URL = _cfg.ROBOT_RTK_WS if _cfg else "ws://localhost:8776"
 
-# ══════════════════════════════════════════════════════════════════════════════
-# BLOCK 1 — DATA MODEL
-# ══════════════════════════════════════════════════════════════════════════════
+logger = setup_logger(__name__, str(Path(__file__).parent / "robot_bridge.log"))
 
+
+# ══════════════════════════════════════════════════════════════════════════
+# BLOCK 1 — DATA MODEL / RECORDING
+# ══════════════════════════════════════════════════════════════════════════
 class Recorder:
-    """Write slim JSONL log during a run. Thread-safe."""
+    """Rate-limited, per-type-slimmed jsonl recorder for manual test runs."""
 
     LOG_DIR = Path(__file__).parent / "data_log"
 
     def __init__(self, interval: float = 1.0) -> None:
+        self._interval = interval
         self._file = None
-        self._lock = threading.Lock()
         self.filename: str = ""
-        self._interval = max(0.2, interval)
-        self._last_ts: dict[str, float] = {}
+        self._last_ts: dict = {}
+        self._lock = threading.Lock()
+
+    @property
+    def active(self) -> bool:
+        return self._file is not None
 
     def start(self) -> str:
+        if self.active:
+            return self.filename
         self.LOG_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.filename = f"run_{ts}.jsonl"
         path = self.LOG_DIR / self.filename
         with self._lock:
             self._file = path.open("a", encoding="utf-8")
+        self._last_ts = {}
         return self.filename
 
     def stop(self) -> None:
@@ -89,10 +107,6 @@ class Recorder:
             if self._file:
                 self._file.close()
                 self._file = None
-
-    @property
-    def active(self) -> bool:
-        return self._file is not None
 
     def write(self, rec_ts: float, msg_type: str, msg: dict) -> None:
         if rec_ts - self._last_ts.get(msg_type, 0.0) < self._interval:
@@ -108,500 +122,450 @@ class Recorder:
                 self._file.flush()
 
     @staticmethod
-    def _slim(rec_ts: float, msg_type: str, msg: dict) -> dict | None:
-        base = {"type": msg_type, "rec_ts": rec_ts}
+    def _slim(rec_ts: float, msg_type: str, msg: dict) -> Optional[dict]:
         if msg_type == "imu":
-            h = msg.get("heading", {})
-            e = msg.get("euler", {})
-            return {**base,
-                    "heading_deg": h.get("deg"), "heading_dir": h.get("dir"),
-                    "roll": e.get("roll"), "pitch": e.get("pitch"), "yaw": e.get("yaw")}
+            heading = msg.get("heading", {})
+            euler = msg.get("euler", {})
+            return {
+                "type": "imu", "rec_ts": rec_ts,
+                "heading_deg": heading.get("deg"), "heading_dir": heading.get("dir"),
+                "roll": euler.get("roll"), "pitch": euler.get("pitch"), "yaw": euler.get("yaw"),
+            }
         if msg_type == "rtk":
-            return {**base,
-                    "lat": msg.get("lat"), "lon": msg.get("lon"),
-                    "fix_quality": msg.get("fix_quality"), "num_sats": msg.get("num_sats")}
+            return {
+                "type": "rtk", "rec_ts": rec_ts,
+                "lat": msg.get("lat"), "lon": msg.get("lon"),
+                "fix_quality": msg.get("fix_quality"), "num_sats": msg.get("num_sats"),
+                "source": msg.get("source"),
+            }
         if msg_type == "odom":
-            return {**base,
-                    "v": msg.get("v"), "w": msg.get("w"),
-                    "soc": msg.get("soc"), "state": msg.get("state")}
+            return {
+                "type": "odom", "rec_ts": rec_ts,
+                "v": msg.get("v"), "w": msg.get("w"), "soc": msg.get("soc"), "state": msg.get("state"),
+            }
         return None
 
-_last_odom:    dict  = {}
-_odom_lock           = threading.Lock()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# BLOCK 2 — I/O ADAPTERS
-# ══════════════════════════════════════════════════════════════════════════════
-
-class _StaticHandler(SimpleHTTPRequestHandler):
-    """Serve web_static/ and inject speed limits into index.html."""
-
-    def __init__(self, *args, directory: str, max_linear: float, max_angular: float, **kwargs):
-        self._max_linear  = max_linear
-        self._max_angular = max_angular
-        super().__init__(*args, directory=directory, **kwargs)
-
-    def do_GET(self):
-        if self.path in ("/", "/index.html"):
-            src  = Path(self.directory) / "index.html"
-            html = src.read_text(encoding="utf-8")
-            html = html.replace(
-                "<html",
-                f'<html data-max-linear="{self._max_linear}" '
-                f'data-max-angular="{self._max_angular}"',
-                1,
-            )
-            body = html.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        else:
-            super().do_GET()
-
-    def log_message(self, format, *args):
-        pass
+# ══════════════════════════════════════════════════════════════════════════
+# BLOCK 2 — CORE
+# ══════════════════════════════════════════════════════════════════════════
+@dataclass
+class RobotEvent:
+    kind: str  # "odom" | "state_change"
+    odom: Optional[dict] = None
+    active: Optional[bool] = None
+    active_changed: bool = False
 
 
-class HttpFileServer:
-    def __init__(self, port: int, static_dir: str, max_linear: float, max_angular: float):
-        self._port        = port
-        self._static_dir  = static_dir
-        self._max_linear  = max_linear
-        self._max_angular = max_angular
+class RobotState:
+    """Parses "O:"/"S:" serial lines; owns odom + auto-active truth.
 
-    def start(self) -> None:
-        def make_handler(*args, **kwargs):
-            return _StaticHandler(
-                *args,
-                directory=self._static_dir,
-                max_linear=self._max_linear,
-                max_angular=self._max_angular,
-                **kwargs,
-            )
-        server = ThreadingHTTPServer(("0.0.0.0", self._port), make_handler)
-        threading.Thread(target=server.serve_forever, name="HttpFileServer", daemon=True).start()
-
-class ImuWsClient:
-    """Subscribe to imu_bridge WS and re-broadcast frames to robot_bridge clients."""
-
-    RECONNECT_DELAY_S = 3.0
-
-    def __init__(self, url: str, broadcast_fn) -> None:
-        self._url          = url
-        self._broadcast_fn = broadcast_fn
-
-    async def run(self) -> None:
-        while True:
-            try:
-                async with websockets.connect(self._url) as ws:
-                    async for raw in ws:
-                        try:
-                            msg = json.loads(raw)
-                            await self._broadcast_fn({**msg, "type": "imu"})
-                        except json.JSONDecodeError:
-                            continue
-            except Exception as exc:
-                logger.warning("ImuWsClient: %s — retry in %.0fs", exc, self.RECONNECT_DELAY_S)
-            await asyncio.sleep(self.RECONNECT_DELAY_S)
-
-
-class RtkWsClient:
-    """Subscribe to rtk_bridge WS and re-broadcast frames to robot_bridge clients."""
-
-    RECONNECT_DELAY_S = 3.0
-
-    def __init__(self, url: str, broadcast_fn) -> None:
-        self._url          = url
-        self._broadcast_fn = broadcast_fn
-
-    async def run(self) -> None:
-        while True:
-            try:
-                async with websockets.connect(self._url) as ws:
-                    async for raw in ws:
-                        try:
-                            msg = json.loads(raw)
-                            available = bool(
-                                msg.get("source") == "rtk"
-                                or (msg.get("fix_quality") or 0) > 0
-                            )
-                            await self._broadcast_fn({**msg, "type": "rtk", "available": available})
-                        except json.JSONDecodeError:
-                            continue
-            except Exception as exc:
-                logger.warning("RtkWsClient: %s — retry in %.0fs", exc, self.RECONNECT_DELAY_S)
-            await asyncio.sleep(self.RECONNECT_DELAY_S)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# BLOCK 3 — ROBOT WEBSOCKET SERVER
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _step_toward(current: float, target: float, max_delta: float) -> float:
-    """Move `current` toward `target` by at most `max_delta`."""
-    diff = target - current
-    if diff > max_delta:
-        return current + max_delta
-    if diff < -max_delta:
-        return current - max_delta
-    return target
-
-
-class RobotWebSocketServer:
-    """
-    WebSocket server for the browser.
-
-    Receives: joystick, toggle_state, heartbeat
-    Broadcasts: odom (20 Hz), state_status (on change), imu / rtk (proxied)
-    Serial:   Feather M4 via pyserial
+    "O:" line's integer state field (CAN-bus AmigaControlState) is the sole
+    source of truth for `active`, re-synced on every line. "S:ACTIVE"/
+    "S:READY" lines apply immediately too, for snappier feedback right after
+    a manual toggle, but the very next "O:" line will correct them if wrong.
     """
 
-    def __init__(
-        self,
-        port:             int,
-        serial_port:      str,
-        serial_baud:      int,
-        serial_timeout:   float,
-        max_linear:       float,
-        max_angular:      float,
-        max_linear_accel:  float,
-        max_angular_accel: float,
-        watchdog_timeout: float,
-        imu_ws_url:       str,
-        rtk_ws_url:       str,
-    ):
-        self._port             = port
-        self._serial_port      = serial_port
-        self._serial_baud      = serial_baud
-        self._serial_timeout   = serial_timeout
-        self._max_linear       = max_linear
-        self._max_angular      = max_angular
-        self._max_linear_accel  = max_linear_accel
-        self._max_angular_accel = max_angular_accel
-        self._watchdog_timeout = watchdog_timeout
-        self._imu_ws_url       = imu_ws_url
-        self._rtk_ws_url       = rtk_ws_url
+    def __init__(self) -> None:
+        self.active: bool = False
+        self.last_odom: dict = {}
 
-        self._ser:         serial.Serial | None = None
-        self._ser_lock     = threading.Lock()
-        self._serial_ok    = False
+    def handle_serial_line(self, line: bytes) -> Optional[RobotEvent]:
+        if line.startswith(b"O:"):
+            return self._handle_odom_line(line)
+        if line in (b"S:ACTIVE", b"S:READY"):
+            new_active = line == b"S:ACTIVE"
+            if new_active != self.active:
+                self.active = new_active
+                return RobotEvent(kind="state_change", active=self.active)
+            return None
+        return None
 
-        self._auto_active  = False
-        self._clients:     set = set()
-        self._clients_lock = asyncio.Lock()
-        self._loop:        asyncio.AbstractEventLoop | None = None
-        self._last_heartbeat = time.time()
-        self._recorder     = Recorder(interval=DEFAULT_RECORD_INTERVAL)
-
-        # CORE — velocity ramp state: target = latest requested setpoint,
-        # out = smoothed value actually written to serial (see _velocity_ramp_loop).
-        self._target_linear  = 0.0
-        self._target_angular = 0.0
-        self._out_linear     = 0.0
-        self._out_angular    = 0.0
-
-    def open_serial(self) -> None:
+    def _handle_odom_line(self, line: bytes) -> Optional[RobotEvent]:
         try:
-            self._ser = serial.Serial(self._serial_port, self._serial_baud, timeout=self._serial_timeout)
-            self._serial_ok = True
-            logger.info("Serial: opened %s @ %d", self._serial_port, self._serial_baud)
+            parts = line[2:].decode().split(",")
+            v = float(parts[0])
+            w = float(parts[1])
+        except (ValueError, IndexError):
+            return None
+
+        state_int: Optional[int] = None
+        if len(parts) > 2:
+            try:
+                state_int = int(parts[2])
+            except ValueError:
+                pass
+        soc: Optional[int] = None
+        if len(parts) > 3:
+            try:
+                soc = int(parts[3])
+            except ValueError:
+                pass
+
+        self.last_odom = {"v": v, "w": w, "state": state_int, "soc": soc, "ts": time.time()}
+
+        active_changed = False
+        if state_int is not None:
+            new_active = state_int == STATE_AUTO_ACTIVE
+            if new_active != self.active:
+                self.active = new_active
+                active_changed = True
+
+        return RobotEvent(kind="odom", odom=dict(self.last_odom),
+                           active=self.active, active_changed=active_changed)
+
+
+class VelocityRamp:
+    """Accel-limited setpoint smoothing, decoupled from WS message arrival rate."""
+
+    def __init__(self, max_linear_accel: float, max_angular_accel: float) -> None:
+        self._max_linear_accel = max_linear_accel
+        self._max_angular_accel = max_angular_accel
+        self.target_linear = 0.0
+        self.target_angular = 0.0
+        self.out_linear = 0.0
+        self.out_angular = 0.0
+
+    def set_target(self, linear: float, angular: float) -> None:
+        self.target_linear = linear
+        self.target_angular = angular
+
+    def stop(self) -> None:
+        self.target_linear = self.target_angular = 0.0
+        self.out_linear = self.out_angular = 0.0
+
+    def step(self, dt: float) -> None:
+        self.out_linear = self._step_toward(self.out_linear, self.target_linear, self._max_linear_accel * dt)
+        self.out_angular = self._step_toward(self.out_angular, self.target_angular, self._max_angular_accel * dt)
+
+    @staticmethod
+    def _step_toward(current: float, target: float, max_delta: float) -> float:
+        diff = target - current
+        if diff > max_delta:
+            return current + max_delta
+        if diff < -max_delta:
+            return current - max_delta
+        return target
+
+
+class Watchdog:
+    """Tracks time since the last heartbeat/joystick message."""
+
+    def __init__(self, timeout: float) -> None:
+        self._timeout = timeout
+        self._last_heartbeat = time.time()
+
+    def feed(self) -> None:
+        self._last_heartbeat = time.time()
+
+    def is_expired(self) -> bool:
+        return (time.time() - self._last_heartbeat) > self._timeout
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# BLOCK 3 — I/O ADAPTERS
+# ══════════════════════════════════════════════════════════════════════════
+class SerialLink:
+    """Owns the physical serial connection: line-buffered reads and writes.
+
+    Reading and writing share one serial.Serial resource by necessity; what
+    a line *means* (RobotState) and what to write in response (the bridge's
+    control loops) live outside this class.
+    """
+
+    RECONNECT_DELAY_S = 3.0
+
+    def __init__(self, port: str, baud: int, timeout: float) -> None:
+        self._port = port
+        self._baud = baud
+        self._timeout = timeout
+        self._ser: Optional[serial.Serial] = None
+        self._ser_lock = threading.Lock()
+
+    def open(self) -> None:
+        try:
+            ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
         except serial.SerialException as exc:
-            logger.error("Serial: cannot open %s: %s", self._serial_port, exc)
-            self._serial_ok = False
-
-    def close_serial(self) -> None:
+            logger.error("Cannot open serial port %s: %s", self._port, exc)
+            return
         with self._ser_lock:
-            if self._ser and self._ser.is_open:
-                self._ser.close()
-                logger.info("Serial: closed")
+            self._ser = ser
+        logger.info("Opened serial port %s @ %d baud", self._port, self._baud)
 
-    def _send_velocity(self, linear: float, angular: float) -> None:
-        cmd = f"V{linear:.2f},{angular:.2f}\n".encode()
+    def _close(self) -> None:
         with self._ser_lock:
-            if self._ser is None or not self._ser.is_open:
-                return
+            ser, self._ser = self._ser, None
+        if ser is not None:
             try:
-                self._ser.write(cmd)
-            except serial.SerialException as exc:
-                logger.error("Serial: write error: %s", exc)
-                self._serial_ok = False
+                ser.close()
+            except Exception:
+                pass
 
-    def _send_raw(self, data: bytes) -> None:
+    def write_velocity(self, linear: float, angular: float) -> None:
+        self._write(f"V{linear:.2f},{angular:.2f}\n".encode())
+
+    def write_raw(self, data: bytes) -> None:
+        self._write(data)
+
+    def write_hbridge(self, cmd: str) -> None:
+        self._write(f"H{cmd}\n".encode())
+
+    def _write(self, data: bytes) -> None:
         with self._ser_lock:
-            if self._ser is None or not self._ser.is_open:
-                return
-            try:
-                self._ser.write(data)
-            except serial.SerialException as exc:
-                logger.error("Serial: raw write error: %s", exc)
-                self._serial_ok = False
+            ser = self._ser
+        if ser is None or not ser.is_open:
+            return
+        try:
+            ser.write(data)
+        except serial.SerialException as exc:
+            logger.error("Serial write failed: %s", exc)
+            self._close()
 
-    def _send_hbridge(self, cmd: str) -> None:
-        msg = f"H{cmd}\n".encode()
-        with self._ser_lock:
-            if self._ser is None or not self._ser.is_open:
-                return
-            try:
-                self._ser.write(msg)
-            except serial.SerialException as exc:
-                logger.error("Serial: hbridge write error: %s", exc)
-                self._serial_ok = False
+    def start_reader(self, on_line: Callable[[bytes], None]) -> None:
+        threading.Thread(target=self._reader_loop, args=(on_line,), name="serial-reader", daemon=True).start()
 
-    def _start_serial_reader(self) -> None:
-        threading.Thread(target=self._serial_reader_thread, name="SerialReader", daemon=True).start()
-
-    def _serial_reader_thread(self) -> None:
+    def _reader_loop(self, on_line: Callable[[bytes], None]) -> None:
         buf = b""
         while True:
-            try:
+            with self._ser_lock:
+                ser = self._ser
+            if ser is None or not ser.is_open:
+                buf = b""
+                self.open()
                 with self._ser_lock:
-                    ser = self._ser
-                if ser is None or not ser.is_open:
-                    buf = b""
-                    time.sleep(0.1)
-                    continue
-                n     = ser.in_waiting
+                    reconnected = self._ser is not None and self._ser.is_open
+                if not reconnected:
+                    time.sleep(self.RECONNECT_DELAY_S)
+                continue
+            try:
+                n = ser.in_waiting
                 chunk = ser.read(n) if n > 0 else b""
             except serial.SerialException as exc:
-                logger.error("SerialReader: error: %s", exc)
+                logger.error("Serial read error: %s. Reconnecting in %.0fs.", exc, self.RECONNECT_DELAY_S)
+                self._close()
                 buf = b""
-                time.sleep(0.1)
+                time.sleep(self.RECONNECT_DELAY_S)
                 continue
             if chunk:
                 buf += chunk
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
-                    self._handle_serial_line(line.strip())
+                    on_line(line.strip())
             else:
                 time.sleep(0.01)
 
-    def _handle_serial_line(self, line: bytes) -> None:
-        if line == b"S:ACTIVE":
-            new_state = True
-        elif line == b"S:READY":
-            new_state = False
-        elif line.startswith(b"O:"):
+
+class ImuWsClient:
+    """Subscribes to 01_IMU and forwards each frame via on_frame."""
+
+    RECONNECT_DELAY_S = 3.0
+
+    def __init__(self, url: str, on_frame: Callable[[dict], "asyncio.Future"]) -> None:
+        self._url = url
+        self._on_frame = on_frame
+
+    async def run(self) -> None:
+        while True:
             try:
-                parts     = line[2:].decode().split(",")
-                v         = float(parts[0])
-                w         = float(parts[1])
-                state_int = int(parts[2]) if len(parts) > 2 else None
-                soc       = int(parts[3]) if len(parts) > 3 else None
-                with _odom_lock:
-                    _last_odom.update({"v": v, "w": w, "state": state_int, "soc": soc, "ts": time.time()})
-            except (ValueError, IndexError):
-                pass
-            return
+                async with websockets.connect(self._url) as ws:
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        await self._on_frame({**msg, "type": "imu"})
+            except Exception as exc:
+                logger.warning("ImuWsClient connection error: %s", exc)
+            await asyncio.sleep(self.RECONNECT_DELAY_S)
+
+
+class RtkWsClient:
+    """Subscribes to 02_RTK, tags each frame with a computed `available` flag."""
+
+    RECONNECT_DELAY_S = 3.0
+
+    def __init__(self, url: str, on_frame: Callable[[dict], "asyncio.Future"]) -> None:
+        self._url = url
+        self._on_frame = on_frame
+
+    async def run(self) -> None:
+        while True:
+            try:
+                async with websockets.connect(self._url) as ws:
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        available = bool(msg.get("source") == "rtk" or (msg.get("fix_quality") or 0) > 0)
+                        await self._on_frame({**msg, "type": "rtk", "available": available})
+            except Exception as exc:
+                logger.warning("RtkWsClient connection error: %s", exc)
+            await asyncio.sleep(self.RECONNECT_DELAY_S)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# BLOCK 4 — APPLICATION
+# ══════════════════════════════════════════════════════════════════════════
+class RobotBridge:
+    def __init__(self, http_port: int, serial_port: str, serial_baud: int, serial_timeout: float,
+                 max_linear: float, max_angular: float, max_linear_accel: float, max_angular_accel: float,
+                 watchdog_timeout: float, imu_ws_url: str, rtk_ws_url: str,
+                 record_interval: float, static_dir: Path) -> None:
+        self._http_port = http_port
+        self._ws_port = derive_ws_port(http_port)
+        self._max_linear = max_linear
+        self._max_angular = max_angular
+        self._imu_ws_url = imu_ws_url
+        self._rtk_ws_url = rtk_ws_url
+        self._static_dir = static_dir
+
+        self._serial = SerialLink(serial_port, serial_baud, serial_timeout)
+        self._robot_state = RobotState()
+        self._velocity_ramp = VelocityRamp(max_linear_accel, max_angular_accel)
+        self._watchdog = Watchdog(watchdog_timeout)
+        self._recorder = Recorder(interval=record_interval)
+
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._ws_server: Optional[BroadcastWsServer] = None
+
+    def run(self) -> None:
+        self._serial.open()
+        self._serial.start_reader(self._on_serial_line)
+
+        if self._static_dir.exists():
+            StaticFileServer(
+                self._static_dir, self._http_port, index_transform=self._inject_limits
+            ).start()
         else:
-            return
-        if self._auto_active == new_state:
-            return
-        self._auto_active = new_state
-        if self._loop is not None:
-            asyncio.run_coroutine_threadsafe(
-                self._broadcast({"type": "state_status", "active": new_state}),
-                self._loop,
-            )
+            logger.warning("Static dir %s not found; HTTP page disabled.", self._static_dir)
 
-    async def _broadcast(self, obj: dict) -> None:
-        rec_ts = time.time()
-        payload = dict(obj)
-        if "type" in payload and "version" not in payload:
-            payload["version"] = WS_MSG_VERSION
-        msg = json.dumps(payload)
-        if self._recorder.active:
-            self._recorder.write(rec_ts, obj.get("type", ""), obj)
-        async with self._clients_lock:
-            clients = set(self._clients)
-        dead = set()
-        for ws in clients:
-            try:
-                await ws.send(msg)
-            except Exception:
-                dead.add(ws)
-        if dead:
-            async with self._clients_lock:
-                self._clients -= dead
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{self._http_port}")).start()
 
-    async def _odom_broadcast_loop(self) -> None:
-        while True:
-            await asyncio.sleep(0.05)  # 20 Hz
-            odom = dict(_last_odom)  # GIL protects dict copy; no lock needed in coroutine
-            if odom:
-                await self._broadcast({"type": "odom", **odom})
-
-    async def _watchdog_loop(self) -> None:
-        while True:
-            await asyncio.sleep(0.5)
-            elapsed = time.time() - self._last_heartbeat
-            if elapsed > self._watchdog_timeout:
-                logger.warning("Watchdog: no heartbeat for %.1fs — emergency stop", elapsed)
-                self._target_linear = self._target_angular = 0.0
-                self._out_linear    = self._out_angular    = 0.0
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, self._send_velocity, 0.0, 0.0)
-                if self._auto_active:
-                    await loop.run_in_executor(None, self._send_raw, b"\r")
-                self._last_heartbeat = time.time()
-
-    async def _velocity_ramp_loop(self) -> None:
-        """CORE — ramp `_out_*` toward `_target_*` at a fixed 20 Hz tick and write to serial.
-
-        Decouples the actual serial send rate/smoothness from the (possibly jittery)
-        rate at which `joystick` WS messages arrive, and acceleration-limits any
-        step change in the requested setpoint.
-        """
-        dt = 0.05
-        while True:
-            await asyncio.sleep(dt)  # 20 Hz
-            self._out_linear  = _step_toward(self._out_linear,  self._target_linear,  self._max_linear_accel  * dt)
-            self._out_angular = _step_toward(self._out_angular, self._target_angular, self._max_angular_accel * dt)
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, self._send_velocity, self._out_linear, self._out_angular)
-
-    async def _ws_handler(self, websocket) -> None:
-        async with self._clients_lock:
-            self._clients.add(websocket)
         try:
-            await websocket.send(
-                json.dumps({"type": "state_status", "active": self._auto_active, "version": WS_MSG_VERSION})
-            )
-        except Exception:
-            pass
-        try:
-            async for raw in websocket:
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                msg_type = msg.get("type")
-                if msg_type in ("heartbeat", "joystick"):
-                    self._last_heartbeat = time.time()
-                if msg_type == "joystick":
-                    try:
-                        self._target_linear  = max(-self._max_linear,  min(self._max_linear,  float(msg.get("linear",  0.0))))
-                        self._target_angular = max(-self._max_angular, min(self._max_angular, float(msg.get("angular", 0.0))))
-                    except (TypeError, ValueError):
-                        pass
-                elif msg_type == "toggle_state":
-                    self._last_heartbeat = time.time()
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, self._send_raw, b"\r")
-                elif msg_type == "lift_control":
-                    cmd_map = {"up": "U", "down": "D", "stop": "S"}
-                    cmd = cmd_map.get(str(msg.get("cmd", "stop")).lower(), "S")
-                    loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, self._send_hbridge, cmd)
-                elif msg_type == "set_recording":
-                    enabled = msg.get("enabled")
-                    logger.info("set_recording received: enabled=%s", enabled)
-                    if enabled:
-                        filename = self._recorder.start()
-                        logger.info("Recording started: %s", filename)
-                        await self._broadcast({"type": "rec_status", "recording": True, "filename": filename})
-                    else:
-                        self._recorder.stop()
-                        logger.info("Recording stopped")
-                        await self._broadcast({"type": "rec_status", "recording": False, "filename": ""})
-        except Exception:
-            pass
-        finally:
-            async with self._clients_lock:
-                self._clients.discard(websocket)
+            asyncio.run(self._run_async())
+        except KeyboardInterrupt:
+            logger.info("Stopped")
 
-    async def serve(self) -> None:
-        self._loop           = asyncio.get_running_loop()
-        self._last_heartbeat = time.time()
-        self._start_serial_reader()
+    def _inject_limits(self, html_bytes: bytes) -> bytes:
+        html = html_bytes.decode("utf-8")
+        html = html.replace(
+            "<html", f'<html data-max-linear="{self._max_linear}" data-max-angular="{self._max_angular}"', 1
+        )
+        return html.encode("utf-8")
+
+    async def _run_async(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._ws_server = BroadcastWsServer(
+            "0.0.0.0", self._ws_port,
+            on_client_message=self._handle_client_message,
+            on_client_connect=self._handle_client_connect,
+        )
 
         imu_client = ImuWsClient(self._imu_ws_url, self._broadcast)
         rtk_client = RtkWsClient(self._rtk_ws_url, self._broadcast)
 
-        async with websockets.serve(self._ws_handler, "0.0.0.0", self._port, ping_interval=None):
-            await asyncio.gather(
-                self._odom_broadcast_loop(),
-                self._velocity_ramp_loop(),
-                self._watchdog_loop(),
-                imu_client.run(),
-                rtk_client.run(),
+        await asyncio.gather(
+            self._odom_broadcast_loop(),
+            self._velocity_ramp_loop(),
+            self._watchdog_loop(),
+            imu_client.run(),
+            rtk_client.run(),
+            self._ws_server.serve(),
+        )
+
+    async def _broadcast(self, payload: dict) -> None:
+        rec_ts = time.time()
+        if self._recorder.active:
+            self._recorder.write(rec_ts, payload.get("type", ""), payload)
+        payload.setdefault("version", WS_MSG_VERSION)
+        await self._ws_server.broadcast(payload)
+
+    async def _handle_client_connect(self, _websocket) -> None:
+        await self._broadcast({"type": "state_status", "active": self._robot_state.active})
+        await self._broadcast({
+            "type": "rec_status",
+            "recording": self._recorder.active,
+            "filename": self._recorder.filename if self._recorder.active else "",
+        })
+
+    async def _handle_client_message(self, _websocket, raw: str) -> None:
+        try:
+            msg = json.loads(raw)
+        except json.JSONDecodeError:
+            return
+        msg_type = msg.get("type")
+        loop = asyncio.get_running_loop()
+
+        if msg_type in ("heartbeat", "joystick"):
+            self._watchdog.feed()
+
+        if msg_type == "joystick":
+            linear = max(-self._max_linear, min(self._max_linear, float(msg.get("linear", 0.0))))
+            angular = max(-self._max_angular, min(self._max_angular, float(msg.get("angular", 0.0))))
+            self._velocity_ramp.set_target(linear, angular)
+        elif msg_type == "toggle_state":
+            self._watchdog.feed()
+            await loop.run_in_executor(None, self._serial.write_raw, b"\r")
+        elif msg_type == "lift_control":
+            cmd_map = {"up": "U", "down": "D", "stop": "S"}
+            cmd = cmd_map.get(str(msg.get("cmd", "stop")).lower(), "S")
+            await loop.run_in_executor(None, self._serial.write_hbridge, cmd)
+        elif msg_type == "set_recording":
+            if msg.get("enabled"):
+                filename = self._recorder.start()
+                await self._broadcast({"type": "rec_status", "recording": True, "filename": filename})
+            else:
+                self._recorder.stop()
+                await self._broadcast({"type": "rec_status", "recording": False, "filename": ""})
+
+    def _on_serial_line(self, line: bytes) -> None:
+        """Runs on the serial reader thread; schedules async work on the event loop."""
+        event = self._robot_state.handle_serial_line(line)
+        if event is None or self._loop is None:
+            return
+        if event.kind == "state_change" or (event.kind == "odom" and event.active_changed):
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({"type": "state_status", "active": event.active}), self._loop
             )
 
+    async def _odom_broadcast_loop(self) -> None:
+        while True:
+            await asyncio.sleep(0.05)  # 20 Hz
+            odom = self._robot_state.last_odom
+            if odom:
+                await self._broadcast({"type": "odom", **odom})
 
-# ══════════════════════════════════════════════════════════════════════════════
-# BLOCK 4 — APPLICATION
-# ══════════════════════════════════════════════════════════════════════════════
+    async def _velocity_ramp_loop(self) -> None:
+        dt = 0.05  # 20 Hz
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(dt)
+            self._velocity_ramp.step(dt)
+            await loop.run_in_executor(
+                None, self._serial.write_velocity, self._velocity_ramp.out_linear, self._velocity_ramp.out_angular
+            )
 
-class RobotBridge:
-    """Top-level orchestrator for the robot serial bridge."""
-
-    def __init__(
-        self,
-        ws_port:          int,
-        serial_port:      str,
-        serial_baud:      int,
-        serial_timeout:   float,
-        max_linear:       float,
-        max_angular:      float,
-        max_linear_accel:  float,
-        max_angular_accel: float,
-        watchdog_timeout: float,
-        imu_ws_url:       str,
-        rtk_ws_url:       str,
-    ):
-        self._ws_port          = ws_port
-        self._serial_port      = serial_port
-        self._serial_baud      = serial_baud
-        self._serial_timeout   = serial_timeout
-        self._max_linear       = max_linear
-        self._max_angular      = max_angular
-        self._max_linear_accel  = max_linear_accel
-        self._max_angular_accel = max_angular_accel
-        self._watchdog_timeout = watchdog_timeout
-        self._imu_ws_url       = imu_ws_url
-        self._rtk_ws_url       = rtk_ws_url
-
-    def run(self) -> None:
-        HttpFileServer(
-            port        = self._ws_port,
-            static_dir  = str(Path(__file__).parent / "web_static"),
-            max_linear  = self._max_linear,
-            max_angular = self._max_angular,
-        ).start()
-
-        ws_server = RobotWebSocketServer(
-            port             = self._ws_port + 1,
-            serial_port      = self._serial_port,
-            serial_baud      = self._serial_baud,
-            serial_timeout   = self._serial_timeout,
-            max_linear       = self._max_linear,
-            max_angular      = self._max_angular,
-            max_linear_accel  = self._max_linear_accel,
-            max_angular_accel = self._max_angular_accel,
-            watchdog_timeout = self._watchdog_timeout,
-            imu_ws_url       = self._imu_ws_url,
-            rtk_ws_url       = self._rtk_ws_url,
-        )
-        ws_server.open_serial()
-
-        logger.info("RobotBridge: http://localhost:%d  ws://localhost:%d  imu→%s  rtk→%s",
-                    self._ws_port, self._ws_port + 1, self._imu_ws_url, self._rtk_ws_url)
-        threading.Timer(1.0, lambda: webbrowser.open(f"http://localhost:{self._ws_port}")).start()
-        asyncio.run(ws_server.serve())
+    async def _watchdog_loop(self) -> None:
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(0.5)
+            if self._watchdog.is_expired():
+                logger.warning("Watchdog: no heartbeat — emergency stop")
+                self._velocity_ramp.stop()
+                await loop.run_in_executor(None, self._serial.write_velocity, 0.0, 0.0)
+                if self._robot_state.active:
+                    await loop.run_in_executor(None, self._serial.write_raw, b"\r")
+                self._watchdog.feed()
 
 
 if __name__ == "__main__":
     RobotBridge(
-        ws_port          = DEFAULT_WS_PORT,
-        serial_port      = DEFAULT_SERIAL_PORT,
-        serial_baud      = DEFAULT_SERIAL_BAUD,
-        serial_timeout   = DEFAULT_SERIAL_TIMEOUT,
-        max_linear       = DEFAULT_MAX_LINEAR,
-        max_angular      = DEFAULT_MAX_ANGULAR,
-        max_linear_accel  = DEFAULT_MAX_LINEAR_ACCEL,
-        max_angular_accel = DEFAULT_MAX_ANGULAR_ACCEL,
-        watchdog_timeout = DEFAULT_WATCHDOG_TIMEOUT,
-        imu_ws_url       = DEFAULT_IMU_WS_URL,
-        rtk_ws_url       = DEFAULT_RTK_WS_URL,
+        http_port=DEFAULT_HTTP_PORT,
+        serial_port=DEFAULT_SERIAL_PORT,
+        serial_baud=DEFAULT_SERIAL_BAUD,
+        serial_timeout=DEFAULT_SERIAL_TIMEOUT,
+        max_linear=DEFAULT_MAX_LINEAR,
+        max_angular=DEFAULT_MAX_ANGULAR,
+        max_linear_accel=DEFAULT_MAX_LINEAR_ACCEL,
+        max_angular_accel=DEFAULT_MAX_ANGULAR_ACCEL,
+        watchdog_timeout=DEFAULT_WATCHDOG_TIMEOUT,
+        imu_ws_url=DEFAULT_IMU_WS_URL,
+        rtk_ws_url=DEFAULT_RTK_WS_URL,
+        record_interval=DEFAULT_RECORD_INTERVAL,
+        static_dir=Path(__file__).parent / "web_static",
     ).run()

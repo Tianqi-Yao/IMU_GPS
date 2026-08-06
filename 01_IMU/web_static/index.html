@@ -81,7 +81,9 @@
   <script type="module" src="imu_visualizer.js"></script>
   <script>
     const rawJson = document.getElementById('raw-json');
-    const ws = new WebSocket('ws://localhost:8766');
+    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsPort = Number(location.port || 8765) + 1;
+    const ws = new WebSocket(`${wsProto}://${location.hostname}:${wsPort}`);
     ws.onmessage = e => { rawJson.textContent = JSON.stringify(JSON.parse(e.data), null, 2); };
   </script>
 

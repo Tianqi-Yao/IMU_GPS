@@ -1,89 +1,75 @@
-#!/usr/bin/env python3
-"""
-Minimal WebSocket client to listen to IMU data from imu_bridge.py
+"""listen_imu_websocket.py — output-boundary observer / recorder for 01_IMU.
 
-Usage:
-    python listen_imu_websocket.py
+Connects to imu_bridge's WebSocket, prints a live formatted table, and logs
+every frame (with local receive timestamps added) to
+data_log/imu_raw_{timestamp}.jsonl for later replay via replay_imu_websocket.py.
+
+Run: python listen_imu_websocket.py
 """
 
 import asyncio
 import json
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
+
 import websockets
 
-WS_URL = "ws://localhost:8766"
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
+from common.ports import derive_ws_port
+
+DEFAULT_HTTP_PORT = _cfg.IMU_WS_PORT if _cfg else 8765
+WS_URL = f"ws://localhost:{derive_ws_port(DEFAULT_HTTP_PORT)}"
+DATA_LOG_DIR = Path(__file__).parent / "data_log"
 
 
-async def listen_imu(ws_url: str):
-    """Connect to imu_bridge.py WebSocket and listen for IMU data."""
-    print(f"Connecting to {ws_url}...")
+async def listen(ws_url: str) -> None:
+    DATA_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = DATA_LOG_DIR / f"imu_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+    print(f"Logging to {log_path}")
+    print(f"{'Roll (deg)':>10} | {'Pitch (deg)':>11} | {'Yaw (deg)':>9} | "
+          f"{'Heading (deg)':>13} | {'Dir':>4} | {'Hz':>5} | Quaternion")
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_log_path = Path(__file__).parent / "data_log" / f"imu_raw_{ts}.jsonl"
-    raw_log_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Raw log file: {raw_log_path}")
+    with log_path.open("a", encoding="utf-8") as log_file:
+        async with websockets.connect(ws_url) as ws:
+            async for raw in ws:
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                data = json.loads(raw)
 
+                recv_dt = datetime.now()
+                data["log_recv_ts"] = recv_dt.timestamp()
+                data["log_recv_iso"] = recv_dt.isoformat(timespec="milliseconds")
+                log_file.write(json.dumps(data, ensure_ascii=False) + "\n")
+                log_file.flush()
+
+                euler = data.get("euler", {})
+                heading = data.get("heading", {})
+                rot = data.get("rot", {})
+                print(
+                    f"{euler.get('roll', 0):>10.2f} | {euler.get('pitch', 0):>11.2f} | "
+                    f"{euler.get('yaw', 0):>9.2f} | {heading.get('deg', 0):>13.2f} | "
+                    f"{heading.get('dir', '-'):>4} | {data.get('hz', 0):>5.1f} | "
+                    f"({rot.get('qi', 0):.3f}, {rot.get('qj', 0):.3f}, "
+                    f"{rot.get('qk', 0):.3f}, {rot.get('qr', 0):.3f})"
+                )
+
+
+def main() -> None:
     try:
-        async with websockets.connect(ws_url) as websocket:
-            print("✓ Connected!")
-            print("\nReceiving IMU data...\n")
-            print("Roll (°) | Pitch (°) | Yaw (°)  | Heading (°) | Direction | Hz   | Quaternion")
-            print("-" * 95)
-
-            frame_count = 0
-            with raw_log_path.open("a", encoding="utf-8") as raw_log_file:
-                async for message in websocket:
-                    try:
-                        raw_text = message.decode("utf-8", errors="replace") if isinstance(message, bytes) else str(message)
-                        recv_dt = datetime.now()
-                        recv_ts_iso = recv_dt.isoformat(timespec="milliseconds")
-                        recv_ts_epoch = recv_dt.timestamp()
-
-                        data = json.loads(raw_text)
-                        data["log_recv_ts"] = recv_ts_epoch
-                        data["log_recv_iso"] = recv_ts_iso
-
-                        raw_log_file.write(json.dumps(data, ensure_ascii=False))
-                        raw_log_file.write("\n")
-                        raw_log_file.flush()
-
-                        euler = data.get("euler", {})
-                        heading_data = data.get("heading", {})
-                        rot = data.get("rot", {})
-                        hz = data.get("hz", 0)
-
-                        roll = euler.get("roll", 0)
-                        pitch = euler.get("pitch", 0)
-                        yaw = euler.get("yaw", 0)
-                        heading = heading_data.get("deg", yaw)
-                        direction = heading_data.get("dir", "N/A")
-
-                        qi = rot.get("qi", 0)
-                        qj = rot.get("qj", 0)
-                        qk = rot.get("qk", 0)
-                        qr = rot.get("qr", 1)
-
-                        print(
-                            f"{roll:7.2f} | {pitch:8.2f} | {yaw:8.2f} | {heading:11.2f} | {direction:9s} | "
-                            f"{hz:4.1f} | [{qi:6.3f}, {qj:6.3f}, {qk:6.3f}, {qr:6.3f}]"
-                        )
-
-                        frame_count += 1
-
-                    except json.JSONDecodeError as e:
-                        print(f"JSON decode error: {e}")
-                    except Exception as e:
-                        print(f"Error processing data: {e}")
-
+        asyncio.run(listen(WS_URL))
     except ConnectionRefusedError:
-        print(f"✗ Connection refused. Make sure imu_bridge.py is running on {ws_url}")
-    except Exception as e:
-        print(f"✗ Connection error: {e}")
+        print(f"Could not connect to {WS_URL} — is imu_bridge.py running?")
+    except KeyboardInterrupt:
+        print("Stopped")
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(listen_imu(WS_URL))
-    except KeyboardInterrupt:
-        print("\n✓ Stopped")
+    main()

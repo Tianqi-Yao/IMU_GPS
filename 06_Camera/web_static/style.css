@@ -184,6 +184,7 @@ header h1 {
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 12px;
   font-size: 0.85rem;
 }
@@ -407,8 +408,8 @@ header h1 {
 }
 
 .config-field-range {
-  align-items: center;
-  margin-top: 6px;
+  display: block;
+  margin-top: 8px;
 }
 
 .range-wrap {

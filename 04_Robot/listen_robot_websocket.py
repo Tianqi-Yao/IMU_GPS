@@ -1,111 +1,80 @@
-#!/usr/bin/env python3
-"""
-listen_robot_websocket.py — Minimal demo for reading robot_bridge data.
+"""listen_robot_websocket.py — output-boundary observer / recorder for 04_Robot.
 
-Shows the simplest way to:
-- connect to ws://localhost:8889
-- receive JSON messages
-- read fields from IMU / RTK / nav_status / odom messages
+Connects to robot_bridge's WebSocket, prints a live formatted line per
+message type, and logs everything (with local receive timestamps added) to
+data_log/robot_raw_{timestamp}.jsonl.
 
-Usage:
-    python listen_robot_websocket.py
+Message types actually broadcast by robot_bridge.py: "odom", "state_status",
+"imu", "rtk", "rec_status". There is no "nav_status" message type — an
+earlier version of this script had a dead branch for it that never fired;
+it has been removed here.
+
+Run: python listen_robot_websocket.py
 """
 
 import asyncio
 import json
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
 import websockets
 
 HOST = "localhost"
 PORT = 8889
+DATA_LOG_DIR = Path(__file__).parent / "data_log"
 
 
 async def listen(host: str, port: int) -> None:
+    DATA_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = DATA_LOG_DIR / f"robot_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+    print(f"Logging to {log_path}")
     url = f"ws://{host}:{port}/"
-    print(f"Connecting to {url} …")
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_log_path = Path(__file__).parent / "data_log" / f"robot_raw_{ts}.jsonl"
-    raw_log_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Raw log file: {raw_log_path}")
-
-    with raw_log_path.open("a", encoding="utf-8") as raw_log_file:
+    with log_path.open("a", encoding="utf-8") as log_file:
         while True:
             try:
                 async with websockets.connect(url) as ws:
                     print(f"Connected to {url}")
-
                     async for raw in ws:
-                        try:
-                            raw_text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
-                            recv_dt = datetime.now()
-                            recv_ts_iso = recv_dt.isoformat(timespec="milliseconds")
-                            recv_ts_epoch = recv_dt.timestamp()
+                        if isinstance(raw, bytes):
+                            raw = raw.decode("utf-8")
+                        msg = json.loads(raw)
 
-                            msg = json.loads(raw_text)
-                            msg["log_recv_ts"] = recv_ts_epoch
-                            msg["log_recv_iso"] = recv_ts_iso
+                        recv_dt = datetime.now()
+                        msg["log_recv_ts"] = recv_dt.timestamp()
+                        msg["log_recv_iso"] = recv_dt.isoformat(timespec="milliseconds")
+                        log_file.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                        log_file.flush()
 
-                            raw_log_file.write(json.dumps(msg, ensure_ascii=False))
-                            raw_log_file.write("\n")
-                            raw_log_file.flush()
-
-                            msg_type = msg.get("type")
-
-                            if msg_type == "imu":
-                                euler = msg.get("euler", {})
-                                print(
-                                    "IMU  | "
-                                    f"roll={euler.get('roll')} "
-                                    f"pitch={euler.get('pitch')} "
-                                    f"yaw={euler.get('yaw')} "
-                                    f"heading={msg.get('heading', {}).get('deg')} "
-                                    f"dir={msg.get('heading', {}).get('dir')} "
-                                )
-
-                            elif msg_type == "rtk":
-                                print(
-                                    "RTK  | "
-                                    f"lat={msg.get('lat')} "
-                                    f"lon={msg.get('lon')} "
-                                    f"fix={msg.get('fix_quality')} "
-                                    f"sats={msg.get('num_sats')} "
-                                    f"available={msg.get('available')}"
-                                )
-
-                            elif msg_type == "nav_status":
-                                print(
-                                    "NAV  | "
-                                    f"state={msg.get('state')} "
-                                    f"progress={msg.get('progress')} "
-                                    f"dist_m={msg.get('distance_m')} "
-                                    f"heading={msg.get('heading_deg')} "
-                                    f"dir={msg.get('heading_dir')}"
-                                )
-
-                            elif msg_type == "odom":
-                                print(
-                                    "ODOM | "
-                                    f"v={msg.get('v')} "
-                                    f"w={msg.get('w')} "
-                                    f"soc={msg.get('soc')} "
-                                    f"state={msg.get('state')}"
-                                )
-
-                            else:
-                                print(f"OTHER| {json.dumps(msg, ensure_ascii=False)}")
-
-                        except json.JSONDecodeError:
-                            print(f"[raw] {raw}")
-
+                        msg_type = msg.get("type")
+                        if msg_type == "imu":
+                            euler = msg.get("euler", {})
+                            heading = msg.get("heading", {})
+                            print(f"IMU  | roll={euler.get('roll')} pitch={euler.get('pitch')} "
+                                  f"yaw={euler.get('yaw')} heading={heading.get('deg')} dir={heading.get('dir')}")
+                        elif msg_type == "rtk":
+                            print(f"RTK  | lat={msg.get('lat')} lon={msg.get('lon')} "
+                                  f"fix_quality={msg.get('fix_quality')} num_sats={msg.get('num_sats')} "
+                                  f"available={msg.get('available')}")
+                        elif msg_type == "odom":
+                            print(f"ODOM | v={msg.get('v')} w={msg.get('w')} "
+                                  f"soc={msg.get('soc')} state={msg.get('state')}")
+                        elif msg_type == "state_status":
+                            print(f"STATE| active={msg.get('active')}")
+                        elif msg_type == "rec_status":
+                            print(f"REC  | recording={msg.get('recording')} filename={msg.get('filename')}")
+                        else:
+                            print(f"OTHER| {json.dumps(msg, ensure_ascii=False)}")
             except (OSError, websockets.exceptions.WebSocketException) as exc:
-                print(f"Disconnected: {exc}. Retrying in 2s…")
+                print(f"Connection error: {exc}. Retrying in 2s...")
                 await asyncio.sleep(2)
 
 
 def main() -> None:
-    asyncio.run(listen(HOST, PORT))
+    try:
+        asyncio.run(listen(HOST, PORT))
+    except KeyboardInterrupt:
+        print("Stopped")
 
 
 if __name__ == "__main__":

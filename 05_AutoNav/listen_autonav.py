@@ -1,26 +1,15 @@
+"""listen_autonav.py — output-boundary observer / recorder for 05_AutoNav.
+
+Connects to autonav_bridge's WebSocket, prints a live one-line status
+summary, and logs every autonav_status frame (full payload, including the
+embedded imu_raw/rtk_raw passthrough) to
+data_log/autonav_raw_{timestamp}.jsonl.
+
+Run: python listen_autonav.py
 """
-listen_autonav.py — Debug observer for autonav_bridge status stream.
-
-Connects to ws://localhost:8806 and prints formatted navigation status.
-Also saves raw JSONL to data_log/autonav_raw_<timestamp>.jsonl.
-
-Usage:
-    python listen_autonav.py
-
-Control commands (type in terminal, press Enter):
-    start   — begin navigation (resumes from current waypoint)
-    stop    — stop, preserves current waypoint index
-    restart — force navigation back to waypoint 0
-    pause   — pause
-    resume  — resume
-"""
-
-from __future__ import annotations
 
 import asyncio
 import json
-import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -30,71 +19,40 @@ WS_URL = "ws://localhost:8806"
 DATA_LOG_DIR = Path(__file__).parent / "data_log"
 
 
-def _fmt_status(d: dict) -> str:
-    state = d.get("state", "?")
-    wp = f"{d.get('current_wp_idx', '?')}/{d.get('total_wp', '?')}"
-    dist = d.get("dist_to_wp_m")
-    dist_s = f"{dist:.2f}m" if dist is not None else "---"
-    bearing = d.get("target_bearing_deg")
-    heading = d.get("heading_deg")
-    error = d.get("bearing_error_deg")
-    linear = d.get("linear", 0.0)
-    angular = d.get("angular", 0.0)
-    gps_age = d.get("gps_age_s", 0.0)
-    imu_age = d.get("imu_age_s", 0.0)
-    block_reason = d.get("sensor_block_reason")
-
-    bearing_s = f"{bearing:.1f}°" if bearing is not None else "---"
-    heading_s = f"{heading:.1f}°" if heading is not None else "---"
-    error_s = f"{error:+.1f}°" if error is not None else "---"
-    reason_s = f"  reason={block_reason}" if block_reason else ""
-
-    return (
-        f"[{state:8s}] wp={wp:6s}  dist={dist_s:8s}  "
-        f"bearing={bearing_s:7s}  heading={heading_s:7s}  err={error_s:7s}  "
-        f"cmd=({linear:.2f}, {angular:+.2f})  "
-        f"GPS age={gps_age:.1f}s  IMU age={imu_age:.1f}s{reason_s}"
-    )
-
-
-async def _stdin_reader(ws) -> None:
-    """Read stdin lines and send control commands to autonav_bridge."""
-    loop = asyncio.get_running_loop()
-    while True:
-        line = await loop.run_in_executor(None, sys.stdin.readline)
-        line = line.strip().lower()
-        if line in ("start", "stop", "restart", "pause", "resume"):
-            await ws.send(json.dumps({"type": line}))
-            print(f"  → sent: {line}")
-        elif line:
-            print(f"  unknown command: {line!r}  (start / stop / restart / pause / resume)")
-
-
-async def main() -> None:
+async def listen(ws_url: str) -> None:
     DATA_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = DATA_LOG_DIR / f"autonav_raw_{ts_str}.jsonl"
+    log_path = DATA_LOG_DIR / f"autonav_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+    print(f"Logging to {log_path}")
 
-    print(f"Connecting to {WS_URL} ...")
-    print(f"Logging to    {log_path}")
-    print("Commands: start / stop / restart / pause / resume")
-    print("-" * 90)
-
-    async with websockets.connect(WS_URL) as ws:
-        asyncio.create_task(_stdin_reader(ws))
-        with open(log_path, "w", encoding="utf-8") as f:
+    with log_path.open("a", encoding="utf-8") as log_file:
+        async with websockets.connect(ws_url) as ws:
             async for raw in ws:
-                try:
-                    data = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                f.write(raw + "\n")
-                f.flush()
-                print(_fmt_status(data))
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                data = json.loads(raw)
+
+                recv_dt = datetime.now()
+                data["log_recv_ts"] = recv_dt.timestamp()
+                data["log_recv_iso"] = recv_dt.isoformat(timespec="milliseconds")
+                log_file.write(json.dumps(data, ensure_ascii=False) + "\n")
+                log_file.flush()
+
+                print(
+                    f"state={data.get('state'):>8} wp={data.get('current_wp_idx')}/{data.get('total_wp')} "
+                    f"dist_to_wp={data.get('dist_to_wp_m')}m bearing_err={data.get('bearing_error_deg')}deg "
+                    f"linear={data.get('linear')} angular={data.get('angular')} "
+                    f"sensor_block={data.get('sensor_block_reason')} robot_connected={data.get('robot_connected')}"
+                )
+
+
+def main() -> None:
+    try:
+        asyncio.run(listen(WS_URL))
+    except ConnectionRefusedError:
+        print(f"Could not connect to {WS_URL} — is autonav_bridge.py running?")
+    except KeyboardInterrupt:
+        print("Stopped")
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\nStopped.")
+    main()

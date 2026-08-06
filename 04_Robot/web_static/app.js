@@ -3,7 +3,7 @@
 // IMU, RTK, nav_status data are proxied from nav_bridge via robot_bridge.
 
 // ── Config ─────────────────────────────────────────────────
-const WS_PORT = parseInt(window.location.port, 10) + 1;
+const WS_PORT = Number(window.location.port || 8888) + 1;
 const WS_URL  = `ws://${window.location.hostname}:${WS_PORT}/`;
 const HEARTBEAT_INTERVAL_MS   = 500;
 const JOYSTICK_SEND_INTERVAL_MS = 100;  // 10 Hz

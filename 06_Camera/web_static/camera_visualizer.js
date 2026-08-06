@@ -126,6 +126,9 @@ function connect() {
         btnSnapshot.disabled = false;
         btnSnapshot.textContent = "Capture Frame";
         alert("Snapshot error: " + data.error);
+      } else if (data.type === "switch_plugin_error") {
+        finishApply();
+        alert("Plugin switch failed: " + data.error);
       } else {
         updateUI(data);
       }
@@ -414,6 +417,7 @@ function renderPluginConfig(plugins, activeName, currentConfig) {
     } else if (field.type === "range") {
       row.classList.add("config-field-range");
       const label = document.createElement("label");
+      label.className = "config-field-title";
       label.textContent = field.label || field.key;
       label.setAttribute("for", "cfg_" + field.key);
 
@@ -441,7 +445,7 @@ function renderPluginConfig(plugins, activeName, currentConfig) {
         liveUpdateTimer = setTimeout(() => {
           send({
             type: "update_plugin_config",
-            config: { [field.key]: parseInt(input.value, 10) },
+            config: { [field.key]: parseFloat(input.value) },
           });
         }, 120);
       });
@@ -494,8 +498,8 @@ btnApplyPlugin.addEventListener("click", () => {
   pluginConfigContainer.querySelectorAll('input[type="number"], input[type="text"], input[type="range"]').forEach(input => {
     const val = input.value.trim();
     if (val === "") return;
-    config[input.name] = input.type === "number" || input.type === "range"
-      ? parseInt(val, 10) : val;
+    config[input.name] = input.type === "range"
+      ? parseFloat(val) : input.type === "number" ? parseInt(val, 10) : val;
   });
 
   clearTimeout(pluginApplyTimer);

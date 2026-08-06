@@ -1,137 +1,79 @@
-#!/usr/bin/env python3
-"""
-Minimal WebSocket client to listen to RTK data from rtk_bridge.py
+"""listen_rtk_websocket.py — output-boundary observer / recorder for 02_RTK.
 
-Usage:
-    python listen_rtk_websocket.py
+Connects to rtk_bridge's WebSocket, prints a live formatted table, and logs
+every frame (with local receive timestamps added) to
+data_log/rtk_raw_{timestamp}.jsonl for later replay via replay_rtk_websocket.py.
+
+Only parses the current single-source rtk_frame contract (lat/lon/alt/
+fix_quality/num_sats/hdop/speed_knots/track_deg/rtk_ts/server_ts/source).
+Dual-antenna/multi-source fields are not part of this contract.
+
+Run: python listen_rtk_websocket.py
 """
 
 import asyncio
 import json
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
+
 import websockets
 
-WS_URL = "ws://localhost:8776"
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+try:
+    import config as _cfg
+except ImportError:
+    _cfg = None
+
+from common.ports import derive_ws_port
+
+DEFAULT_HTTP_PORT = _cfg.RTK_WS_PORT if _cfg else 8775
+WS_URL = f"ws://localhost:{derive_ws_port(DEFAULT_HTTP_PORT)}"
+DATA_LOG_DIR = Path(__file__).parent / "data_log"
+
+FIX_QUALITY = {0: "No Fix", 1: "GPS", 2: "DGPS", 4: "RTK Fixed", 5: "RTK Float"}
 
 
-# Fix quality descriptions
-FIX_QUALITY = {
-    0: "No Fix",
-    1: "GPS",
-    2: "DGPS",
-    4: "RTK Fixed",
-    5: "RTK Float",
-}
+async def listen(ws_url: str) -> None:
+    DATA_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = DATA_LOG_DIR / f"rtk_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+    print(f"Logging to {log_path}")
+    print(f"{'Lat':>12} | {'Lon':>13} | {'Alt (m)':>8} | {'Fix':>9} | "
+          f"{'Sats':>4} | {'HDOP':>5} | {'Speed (kn)':>10} | {'Track (deg)':>11} | Source")
+
+    with log_path.open("a", encoding="utf-8") as log_file:
+        async with websockets.connect(ws_url) as ws:
+            async for raw in ws:
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                data = json.loads(raw)
+
+                recv_dt = datetime.now()
+                data["log_recv_ts"] = recv_dt.timestamp()
+                data["log_recv_iso"] = recv_dt.isoformat(timespec="milliseconds")
+                log_file.write(json.dumps(data, ensure_ascii=False) + "\n")
+                log_file.flush()
+
+                fix_label = FIX_QUALITY.get(data.get("fix_quality", 0), str(data.get("fix_quality")))
+                print(
+                    f"{data.get('lat', 0):>12.7f} | {data.get('lon', 0):>13.7f} | "
+                    f"{data.get('alt') or 0:>8.2f} | {fix_label:>9} | "
+                    f"{data.get('num_sats', 0):>4} | {data.get('hdop') or 0:>5.2f} | "
+                    f"{data.get('speed_knots') or 0:>10.2f} | {data.get('track_deg') or 0:>11.2f} | "
+                    f"{data.get('source', '-')}"
+                )
 
 
-async def listen_rtk(ws_url: str):
-    """Connect to rtk_bridge.py WebSocket and listen for RTK data."""
-    print(f"Connecting to {ws_url}...")
-
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    raw_log_path = Path(__file__).parent / "data_log" / f"rtk_raw_{ts}.jsonl"
-    raw_log_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"Raw log file: {raw_log_path}")
-
+def main() -> None:
     try:
-        async with websockets.connect(ws_url) as websocket:
-            print("✓ Connected!")
-            print("\nReceiving RTK data...\n")
-            print("Active | Heading          | Baseline | RTK Source | Connected | Lat (°)      | Lon (°)       | Alt (m)  | Fix Type      | Sats | HDOP")
-            print("-" * 132)
-
-            frame_count = 0
-            with raw_log_path.open("a", encoding="utf-8") as raw_log_file:
-                async for message in websocket:
-                    try:
-                        raw_text = message.decode("utf-8", errors="replace") if isinstance(message, bytes) else str(message)
-                        recv_dt = datetime.now()
-                        recv_ts_iso = recv_dt.isoformat(timespec="milliseconds")
-                        recv_ts_epoch = recv_dt.timestamp()
-
-                        data = json.loads(raw_text)
-                        data["log_recv_ts"] = recv_ts_epoch
-                        data["log_recv_iso"] = recv_ts_iso
-
-                        raw_log_file.write(json.dumps(data, ensure_ascii=False))
-                        raw_log_file.write("\n")
-                        raw_log_file.flush()
-
-                        lat = data.get("lat")
-                        lon = data.get("lon")
-                        alt = data.get("alt")
-                        fix_quality = data.get("fix_quality", 0)
-                        num_sats = data.get("num_sats", 0)
-                        hdop = data.get("hdop")
-                        heading_deg = data.get("heading_deg")
-                        heading_valid = data.get("heading_valid", False)
-                        heading_dir = data.get("heading_dir")
-                        baseline_m = data.get("heading_baseline_m")
-                        active_source = data.get("rtk_active_source", data.get("rtk_source", ""))
-                        active_label = data.get("rtk_source_label", active_source)
-                        source_frames = data.get("rtk_source_frames", [])
-
-                        fix_str = FIX_QUALITY.get(fix_quality, f"Unknown({fix_quality})")
-
-                        if heading_valid and heading_deg is not None:
-                            heading_str = f"{heading_deg:.1f}° {heading_dir or ''}".strip()
-                        else:
-                            heading_str = "N/A"
-                        baseline_str = f"{baseline_m:.2f}m" if baseline_m is not None else "N/A"
-
-                        active_summary = f"{active_source or '-'} ({active_label or '-'})"
-                        if not source_frames:
-                            source_frames = [{
-                                "source_id": active_source or "rtk",
-                                "label": active_label or "RTK",
-                                "connected": True,
-                                "lat": lat,
-                                "lon": lon,
-                                "alt": alt,
-                                "fix_quality": fix_quality,
-                                "num_sats": num_sats,
-                                "hdop": hdop,
-                            }]
-
-                        print(f"ACTIVE: {active_summary} | HEADING: {heading_str} | BASELINE: {baseline_str}")
-                        for src in source_frames:
-                            src_id = src.get("source_id", "?")
-                            label = src.get("label", src_id)
-                            connected = "yes" if src.get("connected") else "no"
-                            src_lat = src.get("lat")
-                            src_lon = src.get("lon")
-                            src_alt = src.get("alt")
-                            src_fix = FIX_QUALITY.get(src.get("fix_quality", 0), f"Unknown({src.get('fix_quality', 0)})")
-                            src_sats = src.get("num_sats", 0)
-                            src_hdop = src.get("hdop")
-
-                            lat_str = f"{src_lat:.8f}" if src_lat is not None else "N/A"
-                            lon_str = f"{src_lon:.8f}" if src_lon is not None else "N/A"
-                            alt_str = f"{src_alt:.1f}" if src_alt is not None else "N/A"
-                            hdop_str = f"{src_hdop:.2f}" if src_hdop is not None else "N/A"
-
-                            print(
-                                f"{label:<6} | {connected:^9} | {lat_str} | {lon_str} | {alt_str:>7} | "
-                                f"{src_fix:<13} | {src_sats:>4} | {hdop_str:>5}"
-                            )
-                        print("-" * 132)
-
-                        frame_count += 1
-
-                    except json.JSONDecodeError as e:
-                        print(f"JSON decode error: {e}")
-                    except Exception as e:
-                        print(f"Error processing data: {e}")
-
+        asyncio.run(listen(WS_URL))
     except ConnectionRefusedError:
-        print(f"✗ Connection refused. Make sure rtk_bridge.py is running on {ws_url}")
-    except Exception as e:
-        print(f"✗ Connection error: {e}")
+        print(f"Could not connect to {WS_URL} — is rtk_bridge.py running?")
+    except KeyboardInterrupt:
+        print("Stopped")
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(listen_rtk(WS_URL))
-    except KeyboardInterrupt:
-        print("\n✓ Stopped")
+    main()

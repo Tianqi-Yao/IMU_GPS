@@ -1,3 +1,8 @@
+// Map center used only before the WS connection delivers any frame (or while
+// every frame so far is still the server's config.py fallback coordinate,
+// source:"default"). Once a real fix arrives, updateByFrame() recenters the
+// map — this constant is a startup placeholder, not a synced copy of
+// config.py's RTK_DEFAULT_LAT/LON.
 const DEFAULT_POS = [38.9412928598587, -92.31884600793728];
 const WS_URL = `ws://${window.location.hostname}:${Number(window.location.port || 8775) + 1}`;
 const STRINGS = {
@@ -17,19 +22,13 @@ findMe: 'Find Me',
   clearTrack: 'Clear Track',
   exportLog: 'Export Log',
   cardCurrent: 'Current Position',
-  cardDual: 'Dual RTK Status',
   latitude: 'Latitude',
   longitude: 'Longitude',
   source: 'Source',
   heading: 'Heading',
-  baseline: 'Baseline',
   fix: 'Fix',
   satellites: 'Satellites',
   speed: 'Speed',
-  online: 'Online',
-  offline: 'Offline',
-  noFix: 'No Fix',
-  headingInvalid: 'invalid',
   cardMission: 'Mission Progress',
   reached: 'Reached Waypoints',
   target: 'Current Target',
@@ -160,12 +159,9 @@ const btnClearOffset  = document.getElementById('btnClearOffset');
 const btnClearTrack = document.getElementById('btnClearTrack');
 const btnExportLog = document.getElementById('btnExportLog');
 const cardCurrentTitle = document.getElementById('cardCurrentTitle');
-const cardDualTitle = document.getElementById('cardDualTitle');
 const labelLat = document.getElementById('labelLat');
 const labelLon = document.getElementById('labelLon');
 const labelSource = document.getElementById('labelSource');
-const labelHeading = document.getElementById('labelHeading');
-const labelBaseline = document.getElementById('labelBaseline');
 const labelSats = document.getElementById('labelSats');
 const labelSpeed = document.getElementById('labelSpeed');
 const cardMissionTitle = document.getElementById('cardMissionTitle');
@@ -173,9 +169,6 @@ const labelReached = document.getElementById('labelReached');
 const labelTarget = document.getElementById('labelTarget');
 const labelDistance = document.getElementById('labelDistance');
 const cardEventTitle = document.getElementById('cardEventTitle');
-const headingVal = document.getElementById('headingVal');
-const baselineVal = document.getElementById('baselineVal');
-const dualRtkInfo = document.getElementById('dualRtkInfo');
 
 let liveSocket = null;
 let currentMarker = L.circleMarker(DEFAULT_POS, {
@@ -185,10 +178,6 @@ let currentMarker = L.circleMarker(DEFAULT_POS, {
   fillColor: '#118ab2',
   fillOpacity: 0.9,
 }).addTo(map);
-const SOURCE_COLORS = ['#118ab2', '#ef476f', '#06d6a0', '#ffd166'];
-const sourceMarkers = new Map();
-let headingLine = null;
-let headingArrowMarker = null;
 
 let waypoints = [];
 let waypointMarkers = [];
@@ -205,146 +194,6 @@ let hasFirstFix = false;
 let connectionState = 'disconnected';
 let offsetWaypoints = [];
 let offsetPath = null;
-
-function sourceColor(sourceId, index = 0) {
-  const seed = Array.from(sourceId || '').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
-  return SOURCE_COLORS[(seed + index) % SOURCE_COLORS.length];
-}
-
-function formatFixQuality(q) {
-  const v = Number(q);
-  if (!Number.isFinite(v)) return '-';
-  if (v === 4) return 'RTK FIX';
-  if (v === 5) return 'RTK FLOAT';
-  if (v === 2) return 'DGPS';
-  if (v === 1) return 'GPS';
-  return t('noFix');
-}
-
-function renderDualRtkInfo(frame, sourceFrames) {
-  if (!dualRtkInfo) return;
-  if (headingVal) {
-    if (frame.heading_valid && Number.isFinite(Number(frame.heading_deg))) {
-      const deg = Number(frame.heading_deg).toFixed(2);
-      headingVal.textContent = `${deg}\u00b0 ${frame.heading_dir || ''}`.trim();
-    } else {
-      headingVal.textContent = t('headingInvalid');
-    }
-  }
-  if (baselineVal) {
-    baselineVal.textContent = Number.isFinite(Number(frame.heading_baseline_m))
-      ? `${Number(frame.heading_baseline_m).toFixed(2)} m`
-      : '-';
-  }
-
-  dualRtkInfo.innerHTML = '';
-  sourceFrames.forEach((src) => {
-    const card = document.createElement('div');
-    card.className = `rtk-source-card${src.connected ? '' : ' offline'}`;
-    const latText = Number.isFinite(Number(src.lat)) ? Number(src.lat).toFixed(8) : '-';
-    const lonText = Number.isFinite(Number(src.lon)) ? Number(src.lon).toFixed(8) : '-';
-    const satText = src.num_sats == null ? '-' : `${src.num_sats}`;
-    const hdopText = Number.isFinite(Number(src.hdop)) ? Number(src.hdop).toFixed(2) : '-';
-    card.innerHTML = `
-      <div class="rtk-source-head">
-        <strong>${src.label || src.source_id}</strong>
-        <span class="rtk-source-tag">${src.connected ? t('online') : t('offline')}</span>
-      </div>
-      <div class="rtk-source-grid">
-        <span>${t('latitude')}</span><strong>${latText}</strong>
-        <span>${t('longitude')}</span><strong>${lonText}</strong>
-        <span>${t('fix')}</span><strong>${formatFixQuality(src.fix_quality)}</strong>
-        <span>${t('satellites')}</span><strong>${satText}</strong>
-        <span>HDOP</span><strong>${hdopText}</strong>
-      </div>
-    `;
-    dualRtkInfo.appendChild(card);
-  });
-}
-
-function syncDualRtkMap(frame, sourceFrames) {
-  const activeIds = new Set();
-  sourceFrames.forEach((src, idx) => {
-    const sourceId = src.source_id;
-    if (!sourceId) return;
-    const lat = Number(src.lat);
-    const lon = Number(src.lon);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      return;
-    }
-    activeIds.add(sourceId);
-    let marker = sourceMarkers.get(sourceId);
-    if (!marker) {
-      const color = sourceColor(sourceId, idx);
-      marker = L.circleMarker([lat, lon], {
-        radius: 7,
-        color,
-        weight: 2,
-        fillColor: color,
-        fillOpacity: 0.55,
-      }).addTo(map);
-      sourceMarkers.set(sourceId, marker);
-    } else {
-      marker.setLatLng([lat, lon]);
-    }
-    marker.bindTooltip(`${src.label || sourceId}<br/>${lat.toFixed(8)}, ${lon.toFixed(8)}`);
-  });
-
-  for (const [sourceId, marker] of sourceMarkers.entries()) {
-    if (!activeIds.has(sourceId)) {
-      marker.remove();
-      sourceMarkers.delete(sourceId);
-    }
-  }
-
-  if (headingLine) {
-    headingLine.remove();
-    headingLine = null;
-  }
-  if (headingArrowMarker) {
-    headingArrowMarker.remove();
-    headingArrowMarker = null;
-  }
-
-  let sourceA = sourceFrames.find((s) => s.source_id === frame.heading_source_a);
-  let sourceB = sourceFrames.find((s) => s.source_id === frame.heading_source_b);
-  if (!sourceA || !sourceB) {
-    const points = sourceFrames.filter((s) => Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lon)));
-    if (points.length >= 2) {
-      sourceA = points[0];
-      sourceB = points[1];
-    }
-  }
-  if (!sourceA || !sourceB) return;
-
-  const aLat = Number(sourceA?.lat);
-  const aLon = Number(sourceA?.lon);
-  const bLat = Number(sourceB?.lat);
-  const bLon = Number(sourceB?.lon);
-  if (![aLat, aLon, bLat, bLon].every((v) => Number.isFinite(v))) return;
-
-  headingLine = L.polyline([[aLat, aLon], [bLat, bLon]], {
-    color: '#e66b10',
-    weight: 4,
-    opacity: 0.9,
-    lineCap: 'round',
-  }).addTo(map);
-
-  let headingDeg = Number(frame.heading_deg);
-  if (!Number.isFinite(headingDeg)) {
-    const dLat = bLat - aLat;
-    const dLon = bLon - aLon;
-    headingDeg = (Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360;
-  }
-
-  const icon = L.divIcon({
-    className: '',
-    html: `<div class="heading-arrow" style="transform: rotate(${headingDeg - 90}deg)"></div>`,
-    iconSize: [18, 12],
-    iconAnchor: [18, 6],
-  });
-  headingArrowMarker = L.marker([bLat, bLon], { icon, interactive: false }).addTo(map);
-}
 
 function makeWpIcon(state = 'normal', editMode = false) {
   const C = {
@@ -758,10 +607,10 @@ function exportLogs() {
     return;
   }
   const header = [
-    'timestamp','lat','lon','source','rtk_source','rtk_source_label','fix_quality','num_sats','hdop','speed_mps','target_id','target_distance_m','status'
+    'timestamp','lat','lon','source','fix_quality','num_sats','hdop','speed_mps','target_id','target_distance_m','status'
   ];
   const rows = logs.map((r) => [
-    r.timestamp, r.lat, r.lon, r.source, r.rtk_source, r.rtk_source_label, r.fix_quality, r.num_sats,
+    r.timestamp, r.lat, r.lon, r.source, r.fix_quality, r.num_sats,
     r.hdop, r.speed_mps, r.target_id, r.target_distance_m, r.status
   ]);
   const csv = [header, ...rows].map((line) => line.join(',')).join('\n');
@@ -812,23 +661,15 @@ function updateByFrame(frame) {
   const point = [lat, lon];
   currentMarker.setLatLng(point);
 
-  if (!hasFirstFix && frame.source === 'rtk') {
+  if (!hasFirstFix && frame.source !== 'default') {
     hasFirstFix = true;
     console.log('First RTK fix, moving map to', point);
     map.setView(point, map.getZoom());
   }
 
-  const sourceFrames = Array.isArray(frame.rtk_source_frames) ? frame.rtk_source_frames : [];
-  renderDualRtkInfo(frame, sourceFrames);
-  syncDualRtkMap(frame, sourceFrames);
-
   setField('latVal', lat.toFixed(8));
   setField('lonVal', lon.toFixed(8));
-  const sourceParts = [];
-  if (frame.rtk_source_label) sourceParts.push(frame.rtk_source_label);
-  else if (frame.rtk_source) sourceParts.push(frame.rtk_source);
-  if (frame.source) sourceParts.push(frame.source);
-  setField('srcVal', sourceParts.length ? sourceParts.join(' · ') : 'unknown');
+  setField('srcVal', frame.source || 'unknown');
   setField('fixVal', `${frame.fix_quality ?? '-'} `);
   setField('satVal', `${frame.num_sats ?? '-'} `);
   setField('hdopVal', frame.hdop == null ? '-' : Number(frame.hdop).toFixed(2));
@@ -902,8 +743,6 @@ function updateByFrame(frame) {
       lat: lat.toFixed(8),
       lon: lon.toFixed(8),
       source: frame.source || '',
-      rtk_source: frame.rtk_source || '',
-      rtk_source_label: frame.rtk_source_label || '',
       fix_quality: frame.fix_quality ?? '',
       num_sats: frame.num_sats ?? '',
       hdop: frame.hdop ?? '',

@@ -1,232 +1,165 @@
 # 05_AutoNav — Autonomous Navigation
 
-Pure Pursuit + PID path tracking module. Reads IMU heading and RTK position, follows waypoints defined in `path.csv`, and sends velocity commands to `04_Robot`.
+Drives the robot along a fixed waypoint path using live IMU heading + RTK
+position, controlling 04_Robot over WebSocket. This module has the
+project's clearest bridge/algorithm split: **all math lives in
+`autonav_algo.py`; `autonav_bridge.py` only does I/O and sequences the
+state machine.**
 
-## File Structure
+**Read this before assuming the old README's algorithm description:** the
+real control law is a proportional (P-only) heading controller with a hard
+dead zone. It is **not** a PID (no integral/derivative terms) and **not**
+Pure Pursuit (no lookahead point selection — it always aims directly at the
+current waypoint). This is a deliberate, validated simplification; the
+`config.py` tuning knobs below are what's actually used.
 
+## Architecture
+
+- **INPUT** — `ImuWsClient`/`RtkWsClient` subscribe to 01_IMU/02_RTK;
+  `path.csv` waypoint loading; browser WS control messages.
+- **CORE** — `autonav_algo.compute()` (geometry + control law, returns a
+  `ComputeResult` with `linear/angular/arrived/dist_m/bearing_deg` so the
+  bridge never has to recompute distance/bearing itself) and
+  `AutoNavLoop` (the idle/running/paused/lifting/arrived state machine —
+  waypoint advancement, pause-at-waypoint, and lift-triggering are
+  state-machine concerns and live here, not in `autonav_algo.py`).
+- **OUTPUT** — `RobotWsClient` (drive/lift commands to 04_Robot);
+  `common.ws_server.BroadcastWsServer` (autonav_status to the dashboard);
+  `common.http_server.StaticFileServer` (web_static/ + `GET /export_csv`).
+
+## Algorithm (autonav_algo.py, real behavior)
+
+- `fast_distance_m`/`fast_bearing` — equirectangular-projection planar
+  geometry (not haversine great-circle), fine at field scale, not for long
+  distances. Public API (no leading underscore) — used by both
+  `autonav_bridge.py` and `build_waypoints_from_run.py`.
+- `compute(lat, lon, heading_deg, waypoints, wp_idx, dt_s, prev_angular=0.0)`
+  — heading error -> proportional gain (`AUTONAV_PID_KP`) -> hard dead zone
+  (`AUTONAV_DEAD_ZONE_DEG`, below which angular = 0 exactly, not filtered).
+  On high-friction ground a bare P command near the dead zone edge is too
+  weak to break static friction (the error grows unchecked until a much
+  bigger command "breaks free" and overshoots — a field-observed
+  stick-slip weave when driving straight), so two feedforward-style terms
+  compensate without turning this into a PID or Pure Pursuit controller:
+    - `AUTONAV_MIN_ANGULAR_KICK` — deadband/stiction floor: any nonzero
+      angular command outside the dead zone is at least this large.
+    - `AUTONAV_ANGULAR_SLEW_RATE` — rate-limits the *output* command
+      (rad/s², not a derivative of the error) so the kick above doesn't
+      itself jump and overshoot; `prev_angular` (this function's own last
+      return value, threaded through explicitly by the caller since this
+      stays a pure function) is what it slews from.
+  Linear velocity: decelerates within `AUTONAV_DECEL_RADIUS_M` of the
+  waypoint, and **tapers continuously** (not a hard stop) down to
+  `AUTONAV_LINEAR_TURN_FLOOR` as heading error grows past
+  `AUTONAV_DEAD_ZONE_DEG` up to `AUTONAV_LINEAR_TAPER_DEG` — turning while
+  still rolling only fights kinetic friction, not the static friction of a
+  dead-stop pivot turn, which is why turning-while-moving already worked
+  better than the old hard turn-in-place cutoff in the field. The taper
+  never raises speed above what the waypoint-deceleration logic set.
+  Arrival is `dist_m < AUTONAV_REACH_TOL_M`.
+- `compute_calibration_offset(cur_lat, cur_lon, mark_lat, mark_lon, heading_raw)`
+  — in-field compass calibration: stand at a known point facing a landmark,
+  and this returns the north offset to push to 01_IMU.
+- `apply_offset_to_waypoints(waypoints, offset_m)` — shifts the whole path
+  laterally (miter join at corners) for `set_offset` (e.g. driving a
+  parallel lane).
+- **Explicitly not reintroduced** (removed in an earlier, intentional
+  simplification — do not add back without an explicit product decision):
+  integral/derivative terms, moving-average filtering, Pure Pursuit
+  lookahead point selection, haversine great-circle distance.
+
+## State machine
+
+`idle -> running <-> paused -> lifting -> arrived`
+
+- **`lifting`**: triggered when the arriving waypoint's `lift` column is
+  `up`/`down`; runs the lift actuator for `AUTONAV_LIFT_*` duration seconds,
+  then continues to the next waypoint (or `arrived` if it was the last one).
+- **Auto-pause**: if `sensors_ok` (IMU+RTK fresh enough, see
+  `AUTONAV_GPS_TIMEOUT_S`) or the robot WS link goes down while `running`,
+  the loop auto-pauses (`_paused_by_timeout = True`) and auto-resumes once
+  both recover — distinct from a user-initiated `pause` command.
+- **Fixed bug**: `cmd_resume()` now refuses to resume (returns
+  `"sensors_not_ready"`, echoed back to the requesting client as a
+  `resume_result` message) if sensors/robot link are still down, instead of
+  unconditionally flipping to `running` and immediately being bounced back
+  to `paused` by the next control cycle's auto-pause check (a same-cycle
+  paused/running flap in the pre-refactor implementation).
+- Waypoint arrival can require `AUTONAV_ARRIVE_FRAMES` consecutive
+  in-tolerance control cycles before it's confirmed (debounce; default 1 =
+  no debounce). Whether the robot stops and waits for user confirmation at
+  an intermediate waypoint is controlled by `pause_mode` (`"all"` or
+  `"type"`, the latter only pausing at waypoints with `type == "pause"`).
+
+## `config.py` tuning knobs (all real, top-level definitions — none hidden as algorithm-file fallback defaults)
+
+`AUTONAV_PID_KP`, `AUTONAV_DEAD_ZONE_DEG`, `AUTONAV_MIN_ANGULAR_KICK`,
+`AUTONAV_ANGULAR_SLEW_RATE`, `AUTONAV_LINEAR_TAPER_DEG`,
+`AUTONAV_LINEAR_TURN_FLOOR`, `AUTONAV_DECEL_RADIUS_M`, `AUTONAV_REACH_TOL_M`,
+`AUTONAV_MAX_LINEAR_VEL`, `AUTONAV_MIN_LINEAR_VEL`, `AUTONAV_MAX_ANGULAR_VEL`,
+`AUTONAV_MANUAL_SPEED`, `AUTONAV_ARRIVE_FRAMES`.
+
+## Output contract (WebSocket, `autonav_status`, ~`AUTONAV_CONTROL_HZ` Hz)
+
+```json
+{
+  "type": "autonav_status", "version": 1,
+  "state": "running", "current_wp_idx": 3, "total_wp": 12,
+  "heading_deg": 87.5, "target_bearing_deg": 90.1, "bearing_error_deg": 2.6,
+  "dist_to_wp_m": 4.32, "linear": 0.35, "angular": -0.08,
+  "gps_age_s": 0.12, "gps_packet_age_s": 0.20, "gps_fix_quality": 4,
+  "sensor_block_reason": null, "robot_connected": true, "imu_age_s": 0.05,
+  "speed_ratio": 1.0, "manual_speed": 0.4,
+  "calib": {"mark": null, "offset_applied": null},
+  "waypoints_window": [{"idx": 3, "lat": 0.0, "lon": 0.0, "current": true}],
+  "waiting_at_wp": false, "waiting_wp_idx": null, "pause_mode": "all",
+  "lift_cmd": "", "lift_remaining_s": 0.0, "lift_up_s": 5.0, "lift_down_s": 5.0,
+  "offset_m": 0.0,
+  "path_original": [{"lat": 0.0, "lon": 0.0}], "path_offset": [{"lat": 0.0, "lon": 0.0}],
+  "robot_lat": 0.0, "robot_lon": 0.0,
+  "imu_raw": {"...": "full imu_frame"}, "rtk_raw": {"...": "full rtk_frame"}
+}
 ```
-05_AutoNav/
-├── autonav_bridge.py   # I/O framework: sensor reading, state machine, WS/HTTP server
-├── autonav_algo.py     # Control algorithm: reads params from config.py, edit to change steering
-├── path.csv            # Default waypoint file (overridable via UI LOAD CSV button)
-├── listen_autonav.py   # Debug tool: prints live navigation status
-├── replay_imu_rtk.py   # Offline tool: replays recorded IMU/RTK data without hardware
-├── build_waypoints_from_run.py  # Offline tool: converts a recorded manual run into path.csv
-└── web_static/         # Browser dashboard (opens automatically at http://localhost:8805)
-```
 
-## Quick Start
+## Control messages (browser -> bridge)
+
+`start`, `restart`, `stop`, `pause`, `resume` (may reply `resume_result`),
+`set_speed{ratio}`, `load_csv{content}`, `gen_path{lat,lon}`, `calib_mark`,
+`calib_apply`, `manual_drive{linear}`, `confirm_wp`, `set_pause_mode{mode}`,
+`lift_control{cmd}`, `set_lift_duration{up_s,down_s}`, `set_offset{offset_m}`.
+
+**Note**: `pause`/`resume`/`resume_result` are fully implemented in
+`autonav_bridge.py`, but the bundled `web_static/app.js` dashboard does not
+expose any button for them and ignores `resume_result` messages — today
+the only way `paused` is entered/exited is the automatic sensor/robot-link
+timeout path (see "Auto-pause" above). Sending `pause`/`resume` over the
+WebSocket directly (e.g. from a custom client) works as documented; there
+is just no UI affordance for it yet.
+
+## Waypoint file (`path.csv`)
+
+Only `lat`/`lon`/`type`/`lift` columns are consumed (`type` is currently
+either `""` or `"pause"`; `lift` is `""`/`"up"`/`"down"`). Other columns
+(`st lat`, `st lon`, `file`, `row num`, ...) are intermediate fields left
+over from `scripts/convert_offsets_to_latlon.py`'s conversion process and
+are ignored by the loader.
+
+## Record / replay
+
+- `listen_autonav.py` — logs to `data_log/autonav_raw_{timestamp}.jsonl`.
+- `replay_imu_rtk.py` — serves fixed IMU+RTK baseline files on 01_IMU's/
+  02_RTK's normal ports, for developing this bridge without hardware. Point
+  `IMU_JSONL`/`RTK_JSONL` at a matched recording pair before using it.
+- `build_waypoints_from_run.py` — turns a recorded manual drive
+  (04_Robot's `data_log/run_*.jsonl`) into a downsampled waypoint CSV.
+
+## Run
 
 ```bash
 python autonav_bridge.py
 ```
 
-A browser tab opens automatically at `http://localhost:8805`.
-
-## Dashboard Controls
-
-| Button | Key | Effect |
-|--------|-----|--------|
-| **START** | `1` | Begin navigation. Resumes from the current waypoint (breakpoint continue) unless the previous run already arrived, in which case it starts over from waypoint 0. |
-| **STOP** | `2` | Stop navigation, go to idle. Current waypoint index is preserved. |
-| **RESTART** | `3` | Force navigation back to waypoint 0, discarding progress. Only takes effect when idle/paused/arrived (ignored while `running`). |
-| **▲ W / ▼ S** | `W` / `S` | Manual straight-line drive (idle mode only); hold to move |
-| **LOAD CSV** | — | Upload a new waypoint file at runtime; navigation resets to idle and the waypoint index resets to 0 |
-| **MARK POS** | — | Record current GPS position as forward calibration point |
-| **CALIBRATE** | — | Compute heading offset from marked point and apply to `01_IMU` |
-
-Keyboard shortcuts are ignored while a text field on the page has focus, and while a modifier key
-(Ctrl/Alt/Cmd) is held. `PAUSE`/`RESUME` were removed as separate buttons — after the STOP/START
-fix above they were functionally redundant (both left the robot in place, resumable). The
-`pause`/`resume` WS control commands still exist server-side for scripted/debug use (see
-`listen_autonav.py`); the control loop also still uses the internal `paused` state automatically
-(see Safety section below).
-
-## Data Flow
-
-```
-imu_bridge  :8766 ──→ ImuWsClient  ─┐
-                                     ├─ AutoNavLoop → algo.compute() → joystick cmd
-rtk_bridge  :8776 ──→ RtkWsClient  ─┘                                      │
-                                                                             ↓
-path.csv (or uploaded CSV) ─────────────────────────────────→  robot_bridge :8889
-                                                                             │
-                                          AutoNavWsServer :8806 ◄────────────┘
-                                          (Dashboard status + control commands)
-```
-
-## Tuning Parameters — `config.py`
-
-**All parameters live in the root `config.py`.** Change a value there and restart `autonav_bridge.py` — no need to edit any other file.
-
-### Path / Waypoint
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `AUTONAV_LOOKAHEAD_M` | `1.0` | Pure Pursuit lookahead distance (m). Larger = smoother path, cuts corners more. Smaller = tighter waypoint tracking. |
-| `AUTONAV_REACH_TOL_M` | `0.5` | Arrival radius (m). Robot advances to next waypoint when raw GPS is within this distance. RTK cm accuracy supports values as low as 0.3 m. |
-| `AUTONAV_ARRIVE_FRAMES` | `1` | Consecutive frames inside `REACH_TOL_M` required to confirm arrival. 1 = immediate (reliable with RTK). Raise to 2–3 if false arrivals occur from GPS jumps. |
-| `AUTONAV_DECEL_RADIUS_M` | `1.5` | Distance from the **final** waypoint where the robot begins decelerating. Increase for heavier/faster robots that need more braking distance. |
-
-### Speed
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `AUTONAV_MAX_LINEAR_VEL` | `1.0` | Maximum forward speed (m/s). Hard ceiling applied before `speed_ratio` slider. |
-| `AUTONAV_MIN_LINEAR_VEL` | `0.1` | Minimum speed during end-of-path deceleration (m/s). Prevents the robot from stopping mid-approach. |
-| `AUTONAV_MAX_ANGULAR_VEL` | `1.0` | Maximum angular velocity (rad/s). Clamps PID output. |
-| `AUTONAV_MANUAL_SPEED` | `0.4` | Speed used by the W/S manual drive buttons (m/s). |
-
-### Steering Behaviour
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `AUTONAV_TURN_IN_PLACE_DEG` | `10.0` | If heading error exceeds this threshold (°), the robot stops forward motion and rotates in place before driving. Set `0` to disable (always move forward). Larger values = more aggressive cornering. |
-| `AUTONAV_TURN_SLOWDOWN` | `True` | Scale linear speed down proportionally with heading error (full speed at 0°, `MIN_LINEAR` at 60°+). Reduces overshoot on corrections. |
-| `AUTONAV_DEAD_ZONE_DEG` | `3.0` | Heading errors smaller than this are treated as zero — no correction issued. Prevents continuous micro-corrections and motor chatter. Raise to 5–8° if the robot oscillates slightly while driving straight. |
-
-### PID Gains
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `AUTONAV_PID_KP` | `0.15` | Proportional gain. Saturation point = `MAX_ANGULAR / KP` (at 0.15: saturates at 6.7° error). Raise for faster response; lower if oscillation appears. |
-| `AUTONAV_PID_KI` | `0.005` | Integral gain. Corrects persistent steady-state heading offset. Keep small — large values cause slow wind-up oscillation. |
-| `AUTONAV_PID_KD` | `0.15` | Derivative gain. Damps overshoot. Raise (→ 0.3) if the robot overshoots after turns; lower if commands become jittery. |
-
-### Filters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `AUTONAV_MA_WINDOW` | `5` | GPS sliding-average window (frames). At 5 Hz: 5 frames = 1 s of smoothing. Reduces bearing jumps from RTK multipath. Decrease if path response feels sluggish. |
-| `AUTONAV_HEADING_ALPHA` | `0.3` | Heading exponential low-pass coefficient (0 < α ≤ 1). α = 1.0: raw IMU (no filter). α = 0.3: ~0.6 s time constant. α = 0.1: ~2 s (very slow). Lower if physical robot swing causes oscillation; raise if heading display lags. |
-
-### Field Tuning Quick Reference
-
-| Symptom | Fix |
-|---------|-----|
-| Robot snakes / oscillates | Lower `KP`, raise `DEAD_ZONE_DEG`, lower `HEADING_ALPHA` |
-| Heading display lags behind actual | Raise `HEADING_ALPHA` |
-| Robot doesn't reach waypoint, loops back | Raise `REACH_TOL_M`, lower `ARRIVE_FRAMES` |
-| Robot cuts corners / skips waypoints | Lower `LOOKAHEAD_M`, lower `REACH_TOL_M` |
-| Robot overshoots and spins | Raise `KD`, enable `TURN_IN_PLACE_DEG` |
-| Robot turns wrong way | Set `ANGULAR_SIGN = -1` in `autonav_algo.py` |
-
-## Waypoint File (`path.csv`)
-
-Tab or comma separated (auto-detected). `lat`/`lon` are required; `type` and `lift` are optional.
-
-```
-lat,lon,type,lift
-38.94130,-92.31896,,
-38.94140,-92.31880,pause,up
-```
-- `type`: free-text label; `pause` forces a stop at that waypoint.
-- `lift`: `up` / `down` triggers the lift actuator; anything else is ignored.
-
-**Runtime upload**: click **LOAD CSV** in the dashboard to load any CSV without restarting. Navigation resets to idle and the waypoint table updates immediately.
-
-### Generating `path.csv` from a manual run
-
-There's no separate GPS survey step to get precise field coordinates ahead of time — instead,
-drive the planned route once and convert the recording into waypoints:
-
-1. Drive the route via the `04_Robot` web UI, pressing **REC** before starting and stopping it
-   at the end. This writes `04_Robot/data_log/run_<timestamp>.jsonl`.
-2. Run `python 05_AutoNav/build_waypoints_from_run.py`. It picks the newest `run_*.jsonl` by
-   default, downsamples the recorded RTK track so consecutive waypoints are at least
-   `WAYPOINT_MIN_DISTANCE_M` apart (`config.py`), and writes
-   `05_AutoNav/data_log/path_<run_ts>_<density>m.csv`.
-3. Adjust `WAYPOINT_MIN_DISTANCE_M` to change waypoint density and re-run step 2 — no need to
-   re-drive, since it re-processes the same recording.
-4. Load the result via **LOAD CSV**, or copy/rename it to `path.csv` and restart `autonav_bridge.py`.
-
-## Heading Calibration
-
-IMU `heading.deg` depends on `north_offset_deg`. To calibrate in the field:
-
-1. Park robot at origin. Click **MARK POS** to record current GPS position.
-2. Drive robot straight forward several metres (use W button or joystick).
-3. Return robot to origin.
-4. Click **CALIBRATE** — the bridge computes `bearing(origin → mark)`, subtracts `heading.raw`, and sends `set_north_offset` to `01_IMU` bridge via WebSocket. `heading.deg` is updated live.
-
-The calibration panel shows:
-- **MARKED** — recorded forward GPS point
-- **CURRENT** — live GPS position
-- **BEARING** — current→mark bearing (the expected heading at origin)
-- **OFFSET** — last applied `north_offset_deg` (green = applied)
-
-## Debugging
-
-Enable verbose terminal output — set in `autonav_algo.py`:
-
-```python
-ALGO_DEBUG = True
-```
-
-Offline testing without hardware:
-
-```bash
-# Terminal 1: replay recorded IMU + RTK data
-python replay_imu_rtk.py
-
-# Terminal 2: start navigation
-python autonav_bridge.py
-```
-
-Monitor output stream:
-
-```bash
-python listen_autonav.py
-```
-
-## Ports
-
-| Purpose | Port |
-|---------|------|
-| HTTP Dashboard | 8805 |
-| AutoNav WebSocket (status + control) | 8806 |
-| Reads IMU WS | 8766 |
-| Reads RTK WS | 8776 |
-| Writes Robot WS | 8889 |
-
-## Safety
-
-- **Sensor timeout**: navigation auto-pauses if GPS or IMU data age exceeds `AUTONAV_GPS_TIMEOUT_S` (default 5 s); auto-resumes when sensors recover.
-- **GPS fix filter**: frames with `fix_quality == 0` now pause navigation immediately instead of continuing to consume stale RTK coordinates.
-- **Robot link monitoring**: the control loop also auto-pauses when `robot_bridge` (:8889) is disconnected, with `sensor_block_reason = "robot_disconnected"` and `robot_connected: false` in the status payload — previously a dropped robot link left the dashboard showing `running` with a stationary robot and no visible cause. Auto-resumes once the link reconnects, same as the sensor-timeout path. The dashboard shows the active pause reason next to the state badge.
-- **Robot send watchdog**: each velocity command send is bounded by `AUTONAV_ROBOT_SEND_TIMEOUT_S`; if the WebSocket stalls, the control loop drops the command and reconnects instead of hanging.
-- **Watchdog heartbeat**: zero-velocity command sent to `robot_bridge` every second to prevent runaway on connection loss.
-- **Manual drive interlock**: W/S buttons only work in `idle` state — cannot override an active navigation session.
-- **M4 command watchdog**: `CIRCUITPY/code.py` zeroes motor speed if no `V` command is received within 500 ms. This ensures the robot stops even if the Pi–M4 serial link or the robot_bridge WS connection drops mid-navigation.
-- **Control loop fault isolation**: each control-loop iteration is wrapped in `try/except`; an unexpected error (e.g. a malformed sensor payload) is logged and skipped instead of crashing the whole `autonav_bridge.py` process.
-
-## WS Client Design Note — Always Drain Incoming Messages
-
-`RobotWsClient` connects to `robot_bridge` to **send** joystick commands. However, `robot_bridge` also **broadcasts** odom data (20 Hz) back to every connected WS client.
-
-If the client never reads these incoming messages, the following chain causes periodic disconnection (~43 s):
-
-```
-robot_bridge sends odom 20 Hz
-  → autonav never reads it
-  → websockets internal queue fills
-  → OS TCP receive buffer fills (~87 KB / 2 KB·s⁻¹ ≈ 43 s)
-  → TCP Window = 0  (receiver tells sender "stop")
-  → robot_bridge's await ws.send(odom) blocks
-  → robot_bridge event loop stalls
-  → autonav's await ws.send(joystick) waits for ACK > timeout
-  → connection dropped
-```
-
-**Rule**: any WS client that does not need incoming data must still drain the socket:
-
-```python
-# correct — drains and discards
-async for _ in ws:
-    pass
-
-# wrong — never reads; buffer fills and causes TCP backpressure
-await ws.wait_closed()
-```
-
-This applies to all "write-only" WS clients in this codebase (`ImuWsClient`, `RtkWsClient`, `RobotWsClient`). TCP backpressure on a bidirectional connection propagates stalls from the receive direction into the send direction.
+Requires 01_IMU, 02_RTK, and 04_Robot (real or replayed) already running at
+the URLs in `config.py` (`AUTONAV_IMU_WS`/`AUTONAV_RTK_WS`/`AUTONAV_ROBOT_WS`).
+HTTP page on `AUTONAV_WS_PORT` (default 8805), WebSocket on
+`AUTONAV_WS_PORT + 1` (default 8806).

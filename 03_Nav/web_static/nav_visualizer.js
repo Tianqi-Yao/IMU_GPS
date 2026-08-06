@@ -3,7 +3,9 @@
  * Integrated Three.js 3D IMU + Leaflet Map visualization.
  *
  * Single WebSocket connection to nav_bridge (port+1).
- * Data paths: data.imu.* for IMU, data.rtk.* for RTK, data.nav.* for navigation.
+ * nav_bridge is a passthrough, not a fusion module: data.imu.* and
+ * data.rtk.* are the two upstream frames, unmodified. There is no
+ * independently-computed data.nav.* field.
  */
 
 import * as THREE from 'three';

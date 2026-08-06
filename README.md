@@ -1,393 +1,112 @@
-# IMU + RTK Navigation System
+# IMU_GPS v2
 
-## Quick Start
+A robot perception + autonomous-navigation stack for a Raspberry Pi:
+IMU (attitude) and RTK GPS (precision position) feed a real-time WebSocket
+dashboard; an autonomous navigation module drives a chassis (Feather M4 +
+CAN bus to an Amiga VCU); an OAK-D depth camera module streams video
+through a hot-swappable image-processing plugin pipeline; a QR launcher
+page gives phones on the LAN one-tap access to every module.
+
+This is a from-scratch rewrite following `doc/REFACTOR_PROMPT.md`'s
+architecture review of the original project — same black-box contracts,
+cleaned-up internals. **This directory is fully self-contained: no code
+here imports anything from outside `v2/`.**
+
+## Black-box architecture (read this first)
+
+The system is **7 independent bridge processes**. Each can be started,
+debugged, and replaced on its own, as long as its external contract
+(WebSocket/HTTP/serial) stays the same:
+
+- Modules never import each other's business code — only `common/`
+  (zero-business-logic framework code: WS broadcast, static HTTP serving,
+  logging, port derivation) is shared.
+- Every bridge is internally layered INPUT (serial/WS/file reads) / CORE
+  (parsing, algorithms, state machines — no socket/serial handles, unit
+  testable standalone) / OUTPUT (WS broadcast, HTTP responses, file writes).
+- Every module ships a `listen_*.py` (observe/record real traffic) and a
+  `replay_*.py` (simulate that module's data source from a recording) so
+  downstream development never strictly requires the upstream hardware.
+
+## Module / port map
+
+```
+module      HTTP port   WS port (HTTP+1)   hardware input
+00_QR       8700        (no WS — static page only)
+01_IMU      8765        8766                BNO085 (serial)
+02_RTK      8775        8776                RTK GPS (serial, NMEA)
+03_Nav      8785        8786                (subscribes to 01/02's WS)
+04_Robot    8888        8889                Feather M4 (serial)
+05_AutoNav  8805        8806                (subscribes to 01/02's WS, drives 04's WS)
+06_Camera   8815        8816                OAK-D (USB)
+```
+
+Convention: every bridge's HTTP port serves its `web_static/` dashboard;
+its WebSocket port is always `HTTP_PORT + 1` (`common/ports.py::derive_ws_port`).
+
+## `common/` — shared framework layer
+
+```
+common/
+  ws_server.py      BroadcastWsServer: client-set management, broadcast(),
+                     inbound-message dispatch via an on_client_message callback
+  http_server.py     StaticFileServer: threaded static file serving, with
+                     narrow extension hooks (index.html rewriting, extra routes)
+  logging_setup.py   setup_logger(name, logfile): stdout + .log file, once
+  ports.py           derive_ws_port(http_port) -> http_port + 1
+```
+
+`common/` never imports from `00_QR`..`06_Camera`; dependency direction is
+one-way. No coordinate transforms, PID gains, NMEA parsing, or any other
+module-specific logic is allowed to live here — if you're tempted to put
+something module-specific in `common/`, it belongs in that module instead.
+
+## Per-module docs
+
+Each module's `README.md` documents its real (not aspirational) WebSocket/
+serial contract with a JSON example, its control messages, and its
+record/replay workflow: [00_QR](00_QR/) (no README needed — static page,
+see `qr_server.py`), [01_IMU](01_IMU/README.md), [02_RTK](02_RTK/README.md),
+[03_Nav](03_Nav/README.md), [04_Robot](04_Robot/README.md),
+[05_AutoNav](05_AutoNav/README.md), [06_Camera](06_Camera/README.md).
+
+## Run
 
 ```bash
-pip install pyserial websockets depthai opencv-python numpy
+# Start all 7 bridges, each in its own tmux window
 ./start_bridges.sh
+
+# Start ad-hoc listen_*/replay_*/send_demo helper tools via a menu
+./start_helpers.sh
+
+# Record every running bridge's WS output (+ both camera MJPEG streams)
+# into one timestamped session directory
+python3 record_all.py
 ```
 
-Opens modules 01_IMU · 02_RTK · 03_Nav · 04_Robot · 06_Camera in one tmux session with separate windows.
-Ctrl+C stops the process in the current window but leaves the tmux window open.
-Detach: `Ctrl-B D` · Kill: `tmux kill-session -t bridges`
-
----
-
-A real-time sensor fusion platform for farm robots, combining a BNO085 IMU with an RTK-GPS receiver. Seven independent modules — IMU visualization, RTK mapping, integrated Nav dashboard, robot control, autonomous navigation, camera streaming, and data recording — communicate via WebSocket bridges, all viewable in a browser.
-
-## Architecture
-
-```
-┌─────────────┐     serial/SPI      ┌──────────────┐   WS :8766
-│  BNO085 IMU │ ──────────────────→ │  imu_bridge  │ ──────────┐
-│  (ESP32-C3) │                     │  (01_IMU)    │           │
-└─────────────┘                     └──────────────┘           │
-                                                               ▼
-┌─────────────┐     serial/UART     ┌──────────────┐   WS :8776    ┌──────────────┐  WS :8786
-│  RTK GPS    │ ──────────────────→ │  rtk_bridge  │ ──────────┬──→│  nav_bridge  │ ─────────→  Browser
-│  receiver   │                     │  (02_RTK)    │           │   │  (03_Nav)    │           http :8785
-└─────────────┘                     └──────────────┘           │   └──────────────┘
-                                                               │          ▲
-                                                               └──────────┘
-
-┌─────────────┐     serial/USB-CDC  ┌───────────────┐  WS :8796
-│  Farm-ng    │ ←──────────────────→│  robot_bridge │ ─────────→  Browser
-│  Amiga CAN  │   (O:/S: + WASD/V) │  (04_Robot)   │           http :8795
-│ (Feather M4)│                     └───────────────┘
-└─────────────┘                            ▲
-                                           │
-                    ┌──────────────────┐    │  WS :8806
-                    │  autonav_bridge  │────┤─────────→  Browser
-                    │  (05_AutoNav)    │    │           http :8805
-                    └──────────────────┘    │
-                      ▲ IMU  ▲ RTK         │ velocity commands
-                      │      │             │
-                    ┌──────────────────┐    │  WS :8826
-                    │   sim/replay hub │────┘─────────→  Browser
-                    │  (07_SimReplay)  │
-                    └──────────────────┘
-
-┌─────────────┐                      ┌───────────────┐  WS :8816
-│  OAK-D PoE  │ ──── TCP/IP ───────→ │ camera_bridge │ ─────────→  Browser
-│  Camera(s)  │     depthai v3       │  (06_Camera)  │           http :8815
-└─────────────┘                      └───────────────┘       MJPEG :8080/8081
-```
-
-Each bridge serves its own static web UI over HTTP:
-
-| Module | HTTP | WebSocket | Description |
-|--------|------|-----------|-------------|
-| `01_IMU` | 8765 | 8766 | 3D IMU orientation + sensor data cards |
-| `02_RTK` | 8775 | 8776 | Leaflet map + waypoint management |
-| `03_Nav` | 8785 | 8786 | Integrated dashboard (3D + map + all panels) |
-| `04_Robot` | 8795 | 8796 | Amiga robot controller (telemetry + WASD/velocity) |
-| `05_AutoNav` | 8805 | 8806 | Autonomous navigation (GPS+IMU PID/PurePursuit) |
-| `06_Camera` | 8815 | 8816 | OAK-D camera MJPEG streaming (video on 8080/8081) |
-| `07_SimReplay` | - | - | Replay/simulation helpers for offline integration |
-
-## Directory Structure
-
-```
-IMU_GPS/
-├── config.py                    # ★ Unified hyperparameter config for all modules (01–06)
-├── start_bridges.sh             # ★ One-command tmux launcher (01–04 + 06, separate windows)
-│
-├── 01_IMU/
-│   ├── bno085_esp32c3/          # ESP32-C3 Arduino firmware (SPI, 50 Hz JSON)
-│   │   └── bno085_esp32c3.ino
-│   ├── imu_bridge.py            # Serial → WebSocket bridge
-│   ├── listen_imu_websocket.py  # Debug WS client
-│   ├── requirements.txt
-│   └── web_static/
-│
-├── 02_RTK/
-│   ├── rtk_bridge.py            # NMEA serial → WebSocket bridge
-│   ├── requirements.txt
-│   └── web_static/
-│
-├── 03_Nav/
-│   ├── nav_bridge.py            # IMU + RTK aggregator → unified WS feed
-│   ├── listen_nav_websocket.py  # Debug WS client
-│   ├── requirements.txt
-│   └── web_static/
-│
-├── 04_Robot/
-│   ├── robot_bridge.py          # Amiga serial bridge (bidirectional)
-│   ├── listen_robot_websocket.py
-│   ├── send_robot_only_demo.py
-│   ├── requirements.txt
-│   └── web_static/
-│
-├── 05_AutoNav/
-│   ├── autonav_bridge.py        # Autonomous nav (PID/PurePursuit + GPS filters)
-│   ├── requirements.txt
-│   └── web_static/
-│
-├── 06_Camera/
-│   ├── camera_bridge.py         # OAK-D MJPEG bridge + two-layer plugin orchestrator
-│   ├── plugins/
-│   │   ├── __init__.py          # FrameProcessor ABC + registry + auto-discovery
-│   │   ├── simple_color.py      # Pass-through RGB preview
-│   │   ├── path_cam.py          # Yellow-tape path detection (HSV masking)
-│   │   ├── depth_cam.py         # Depth colourmap + RGB blend  (requires --stereo)
-│   │   ├── obstacle_cam.py      # Near-obstacle warning via disparity (requires --stereo --disparity)
-│   │   └── disparity_demo.py    # Minimal raw disparity demo   (requires --stereo --disparity)
-│   ├── requirements.txt
-│   └── web_static/
-│       ├── index.html
-│       ├── camera_visualizer.js
-│       ├── style.css
-│       └── snapshots/           # Auto-created; holds per-session HTML snapshot files
-│
-├── 07_SimReplay/
-│   ├── start_nav_with_replay.sh # One-click: 01 replay + 02 replay + 03 nav + listener (tmux)
-│   ├── sim_robot_ws_server.py   # Local fake robot WS simulator
-│   ├── demo_filter_by_type.py   # Filtered listener demo for simulator/robot WS
-│   └── README.md
-│
-├── CIRCUITPY/                   # CircuitPython firmware for Adafruit Feather M4 CAN
-│   └── code.py
-│
-└── CLAUDE.md                    # AI coding conventions
-```
-
-## Global Configuration — `config.py`
-
-All default hyperparameters for modules 01–06 live in a single file. Edit it once and restart the relevant bridge — no need to touch individual bridge scripts:
-
-```python
-# 01_IMU
-IMU_SERIAL_PORT  = "/dev/cu.usbmodem101"
-IMU_BAUD         = 921600
-IMU_WS_PORT      = 8765
-IMU_NORTH_OFFSET = 0.0              # heading calibration (degrees)
-
-# 05_AutoNav — path tracking (see 05_AutoNav/README.md for full reference)
-AUTONAV_LOOKAHEAD_M       = 1.0    # Pure Pursuit lookahead distance (m)
-AUTONAV_REACH_TOL_M       = 0.5    # waypoint arrival radius (m)
-AUTONAV_ARRIVE_FRAMES     = 1      # consecutive frames to confirm arrival
-AUTONAV_DECEL_RADIUS_M    = 1.5    # deceleration distance before final waypoint (m)
-AUTONAV_MAX_LINEAR_VEL    = 1.0    # max forward speed (m/s)
-AUTONAV_MIN_LINEAR_VEL    = 0.1    # min speed during deceleration (m/s)
-AUTONAV_MAX_ANGULAR_VEL   = 1.0    # max angular velocity (rad/s)
-AUTONAV_MANUAL_SPEED      = 0.4    # W/S manual drive speed (m/s)
-AUTONAV_TURN_IN_PLACE_DEG = 10.0   # stop forward motion above this heading error (°)
-AUTONAV_TURN_SLOWDOWN     = True   # scale speed down with heading error
-AUTONAV_DEAD_ZONE_DEG     = 3.0    # ignore errors smaller than this (°)
-AUTONAV_PID_KP            = 0.15   # PID proportional gain
-AUTONAV_PID_KI            = 0.005  # PID integral gain
-AUTONAV_PID_KD            = 0.15   # PID derivative gain
-AUTONAV_MA_WINDOW         = 5      # GPS sliding-average window (frames)
-AUTONAV_HEADING_ALPHA     = 0.3    # heading low-pass filter coefficient (0–1)
-
-# 06_Camera
-CAM_FPS              = 25
-CAM_WIDTH            = 640
-CAM_HEIGHT           = 400
-CAM_ENABLE_STEREO    = True         # enable depth stream
-CAM_ENABLE_DISPARITY = False        # enable raw disparity (extra load; off by default)
-```
-
-CLI arguments always override `config.py` values at runtime.
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.10+
-- Arduino IDE (for firmware upload)
-- `tmux` (for `start_bridges.sh`)
-
-### 1. Install dependencies
-
-```bash
-pip install pyserial websockets
-```
-
-### 2. Launch all bridges at once (recommended)
-
-```bash
-./start_bridges.sh
-```
-
-Opens modules 01–04 and 06 in a single tmux session with separate windows:
-
-```
-Window 1: 01_IMU
-Window 2: 02_RTK
-Window 3: 03_Nav
-Window 4: 04_Robot
-Window 5: 06_Camera
-```
-
-- Detach: `Ctrl-B D`
-- Kill session: `tmux kill-session -t bridges`
-- Re-attach: `./start_bridges.sh` (attaches if session already exists)
-
-### 3. Run modules individually
-
-```bash
-cd 01_IMU && python imu_bridge.py          # http://localhost:8765
-cd 02_RTK && python rtk_bridge.py          # http://localhost:8775
-cd 03_Nav && python nav_bridge.py          # http://localhost:8785
-cd 04_Robot && python robot_bridge.py      # http://localhost:8795
-cd 05_AutoNav && python autonav_bridge.py  # http://localhost:8805
-cd 06_Camera && python camera_bridge.py   # http://localhost:8815
-cd 07_SimReplay && ./start_nav_with_replay.sh # 01/02 replay feed 03_Nav
-```
-
-### 4. Camera — depth and disparity flags
-
-```bash
-# RGB only (most stable, lowest load)
-python camera_bridge.py
-
-# RGB + depth (recommended for 3D perception)
-python camera_bridge.py --stereo
-
-# RGB + depth + raw disparity (enables obstacle_cam and disparity_demo plugins)
-python camera_bridge.py --stereo --disparity
-```
-
-Or set permanently in `config.py`:
-
-```python
-CAM_ENABLE_STEREO    = True
-CAM_ENABLE_DISPARITY = False   # turn on only when debugging disparity plugins
-```
-
-## Module Details
-
-### 01_IMU — IMU Bridge
-
-- **Data flow**: `Serial → SerialReader → IMUPipeline → asyncio.Queue → WebSocketServer → Browser`
-- **Pipeline**: `_parse → _enrich_euler (heading) → _enrich_hz → _serialize`
-- **Features**: real-time 3D orientation (Three.js), compass HUD, north-offset calibration, lock-yaw mode, top-north view, 11 sensor data cards; **heading computed in backend**
-- **Debug**: `listen_imu_websocket.py`
-
-### 02_RTK — RTK Bridge
-
-- **Data flow**: `Serial → SerialReader → NMEAPipeline → BroadcastLoop → WebSocketServer → Browser`
-- **Pipeline**: `_verify_checksum → _dispatch → _parse_gga / _parse_rmc`
-- **Features**: Leaflet map (satellite/OSM/offline tiles), waypoint CRUD, CSV import/export, path simulation, track recording, EN/ZH i18n
-
-### 03_Nav — Navigation Dashboard
-
-- **Data flow**: `imu_bridge(WS) + rtk_bridge(WS) → NavLoop(10 Hz) → NavController → WebSocketServer → Browser`
-- **Layout**: 3D view (top 40%) + Leaflet map (bottom 60%) | right data panel (320 px)
-- **Features**: all IMU + RTK features unified in one page, waypoint arrival detection, heading/north-offset forwarded from IMU backend
-- **Debug**: `listen_nav_websocket.py`
-
-### 04_Robot — Amiga Robot Controller
-
-- **Data flow**: `Serial ↔ SerialReader → RobotPipeline → asyncio.Queue → WebSocketServer → Browser`
-- **Pipeline**: `_parse → _enrich_state → _enrich_hz → _enrich_odometry → _serialize`
-- **Serial protocol**: `O:{speed},{ang_rate},{state},{soc}` telemetry (~20 Hz); accepts WASD and `V{speed},{ang_rate}\n`
-- **Features**: WASD/button control, velocity sliders, E-Stop, SOC bar, odometry, Three.js top-down view
-- **Debug**: `listen_robot_websocket.py`, `send_robot_only_demo.py`
-
-### 05_AutoNav — Autonomous Navigation Engine
-
-- **Data flow**: `imu_bridge :8766 + rtk_bridge :8776 → AutoNavLoop → algo.compute() → robot_bridge :8889`
-- **Algorithm**: Pure Pursuit (lookahead waypoint selection) + PID (heading error → angular velocity)
-- **State machine**: `idle → running → paused → arrived`
-- **Dashboard features**: live compass, waypoint table (7-point window), manual W/S drive, heading calibration (MARK POS → CALIBRATE sends `set_north_offset` to `01_IMU`)
-- **Runtime CSV load**: upload a new `path.csv` via the LOAD CSV button without restarting
-- **All tuning params in `config.py`**: PID gains, Pure Pursuit lookahead, arrival radius, filters, speeds — see `05_AutoNav/README.md` for full parameter reference
-
-### 06_Camera — OAK-D Camera Bridge
-
-#### Two-layer architecture
-
-```
-Layer 1 — CameraDevice  (opened once at startup; never restarted on plugin switch)
-  ├─ RGB node         → rgb queue        (always)
-  ├─ StereoDepth node → depth queue      (when --stereo)
-  └─ StereoDepth node → disparity queue  (when --stereo --disparity)
-
-Layer 2 — FrameProcessor  (swapped atomically; zero stream downtime)
-  plugin.required_streams() → ['rgb'] | ['rgb','depth'] | ...
-  plugin.process(frames)    → output ndarray → MJPEG encode → Browser
-```
-
-#### Plugin system
-
-Drop a `.py` file into `plugins/` with a `@register_processor`-decorated `FrameProcessor` subclass. It is auto-discovered at startup and appears in the browser dropdown with a `config_schema()` UI. No changes to existing code needed.
-
-```python
-from . import FrameProcessor, register_processor
-
-@register_processor
-class MyPlugin(FrameProcessor):
-    PROCESSOR_NAME = "my_plugin"
-    PROCESSOR_LABEL = "My Plugin"
-    PROCESSOR_DESCRIPTION = "..."
-
-    @classmethod
-    def required_streams(cls):
-        return ["rgb"]           # declare which streams you need
-
-    def process(self, frames):
-        img = frames["rgb"]     # ndarray (BGR, uint8)
-        # ... your processing ...
-        return img
-```
-
-Built-in plugins:
-
-| Plugin | Required streams | Description |
-|--------|-----------------|-------------|
-| `simple_color` | rgb | Pass-through RGB preview |
-| `path_cam` | rgb | Yellow-tape path detection (HSV masking, contour scoring) |
-| `depth_cam` | rgb, depth | Depth colourmap + RGB blend |
-| `obstacle_cam` | rgb, disparity | Near-obstacle warning (DANGER / CAUTION / CLEAR zones) |
-| `disparity_demo` | disparity | Minimal raw disparity colourmap — starter template |
-
-#### Snapshot (pixel inspector)
-
-Click **Capture Frame** in the browser control panel. A self-contained HTML file is saved to `web_static/snapshots/` and opened automatically in a new tab:
-
-- Canvas rendering of the captured output frame
-- Hover anywhere to inspect pixel values:
-  - All plugins: canvas R/G/B at cursor
-  - `rgb` stream: raw R/G/B from sensor
-  - `depth` stream: distance in **mm**
-  - `disparity` stream: disparity value in **px**
-
-#### Stream flags
-
-| CLI flag | `config.py` key | Default | Effect |
-|----------|----------------|---------|--------|
-| `--stereo` / `--no-stereo` | `CAM_ENABLE_STEREO` | `True` | Enable Left/Right/StereoDepth nodes → depth stream |
-| `--disparity` / `--no-disparity` | `CAM_ENABLE_DISPARITY` | `False` | Enable raw disparity queue (additional CPU/bandwidth) |
-
-### 07_SimReplay — Replay/Simulation Hub
-
-- **Goal**: run downstream modules without hardware by replaying recorded JSONL data.
-- **One-click stack**: `./07_SimReplay/start_nav_with_replay.sh` starts IMU replay + RTK replay + Nav bridge + Nav listener.
-- **Use case**: when `03_Nav` needs `01_IMU` and `02_RTK` inputs but devices are unavailable.
-
-## Hardware
-
-### BNO085 IMU (ESP32-C3)
-
-| Signal | GPIO |
-|--------|------|
-| MOSI | 1 |
-| MISO | 6 |
-| SCK | 7 |
-| CS | 0 |
-| INT | 5 |
-| RST | 2 |
-| BOOT | 9 (long-press 3 s to save calibration) |
-
-- **Library**: Adafruit BNO08x (Arduino Library Manager)
-- **Interface**: SPI at 1 MHz
-- **Output**: JSON over UART at 921600 baud, ~50 Hz
-
-### RTK GPS Receiver
-
-- **Interface**: UART (NMEA 0183)
-- **Default baud**: 9600
-- **Sentences parsed**: GGA (position/fix/sats), RMC (speed/course)
-
-### OAK-D PoE Camera
-
-- **Connection**: TCP/IP via depthai v3 (`dai.DeviceInfo(ip)`)
-- **Default IPs**: cam1 = `10.95.76.11`, cam2 = `10.95.76.10`
-- **Sockets used**: CAM_A (RGB), CAM_B (Left), CAM_C (Right)
-- **Stereo output size**: 640×400 px per eye; RGB configurable (default 640×400)
-
-## Code Conventions
-
-All code follows the conventions defined in `CLAUDE.md`:
-
-- OOP + Pipeline pattern
-- `@dataclass` for data models
-- `INPUT / CORE / OUTPUT` banner annotations at I/O boundaries
-- English-only code comments, logs, and CLI output
-- `logging` module with `.log` file output
-
-## License
-
-Internal project — not published.
+## Configuration
+
+All tunable parameters live in the repo-root `config.py`, grouped by module
+number. Edit the file and restart the relevant bridge to apply changes — no
+CLI arguments are added by default. Each consumer module defines its own
+upstream WebSocket URL variables (e.g. `ROBOT_IMU_WS`/`ROBOT_RTK_WS`) rather
+than borrowing another module's, so changing one module's upstream address
+never accidentally affects another.
+
+## Record / replay workflow
+
+1. Run the real bridge (with hardware attached) alongside its `listen_*.py`
+   to capture a `data_log/*.jsonl` baseline sample.
+2. Commit that sample if it's broadly useful for offline development.
+3. Anyone downstream can run `replay_*.py` (which defaults to the most
+   recently recorded file in `data_log/`) to get the same WebSocket
+   contract without the hardware attached.
+
+## Firmware
+
+`CIRCUITPY/` (Feather M4, drives the Amiga VCU over CAN — see
+`04_Robot/README.md` for the serial protocol) and
+`01_IMU/bno085_esp32c3/bno085_esp32c3.ino` (BNO085 IMU firmware — see
+`01_IMU/README.md` for the wire protocol) are carried over unchanged; both
+protocols were already verified correct and are out of scope for this
+rewrite.

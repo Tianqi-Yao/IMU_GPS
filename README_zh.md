@@ -1,401 +1,74 @@
-# IMU + RTK 导航系统
+# IMU_GPS v2
 
-## 快速开始
+面向树莓派的机器人感知与自动导航系统:IMU(姿态)和 RTK GPS(高精度定位)把数据实时广播给浏览器仪表盘;自动导航模块驱动机器人底盘(Feather M4 单片机 + CAN 总线到 Amiga 电控);OAK-D 深度相机模块通过一套可热插拔的图像处理插件推流视频;二维码启动页让手机在局域网内一键访问全部模块。
+
+这是根据 `doc/REFACTOR_PROMPT.md` 的架构评审,对原项目做的一次从零重写——对外契约(黑盒边界)保持不变,内部实现全部清理。**本目录完全独立:这里的任何代码都不 import `v2/` 之外的东西。**
+
+## 黑盒优先架构(请先读这节)
+
+系统由 **7 个独立的 bridge 进程**组成。只要对外契约(WebSocket/HTTP/串口)不变,每个模块都可以单独启动、单独调试、整体替换:
+
+- 模块之间不允许互相 import 业务代码——唯一共享的是 `common/`(零业务逻辑的框架代码:WS 广播、静态 HTTP 服务、日志、端口派生)。
+- 每个 bridge 内部都分 INPUT(串口/WS/文件读取)/ CORE(解析、算法、状态机——不持有 socket/串口对象,可脱离硬件单独测试)/ OUTPUT(WS 广播、HTTP 响应、文件写入)三层。
+- 每个模块都配一份 `listen_*.py`(观察/记录真实流量)和 `replay_*.py`(用录制数据模拟该模块的数据源),下游开发不必强依赖上游硬件。
+
+## 模块与端口一览
+
+```
+模块        HTTP 端口   WS 端口(HTTP+1)   硬件输入
+00_QR       8700        (无 WS,纯静态页面)
+01_IMU      8765        8766                BNO085(串口)
+02_RTK      8775        8776                RTK GPS(串口,NMEA)
+03_Nav      8785        8786                (订阅 01/02 的 WS)
+04_Robot    8888        8889                Feather M4(串口)
+05_AutoNav  8805        8806                (订阅 01/02 的 WS,驱动 04 的 WS)
+06_Camera   8815        8816                OAK-D(USB)
+```
+
+约定:每个 bridge 的 HTTP 端口服务其 `web_static/` 仪表盘;WebSocket 端口永远是 `HTTP 端口 + 1`(见 `common/ports.py::derive_ws_port`)。
+
+## `common/` —— 共享框架层
+
+```
+common/
+  ws_server.py      BroadcastWsServer:客户端集合管理、broadcast()、
+                     通过 on_client_message 回调分发入站消息
+  http_server.py     StaticFileServer:多线程静态文件服务,带两个窄扩展点
+                     (改写 index.html、额外路由)
+  logging_setup.py   setup_logger(name, logfile):stdout + .log 文件双输出
+  ports.py           derive_ws_port(http_port) -> http_port + 1
+```
+
+`common/` 绝不 import `00_QR`~`06_Camera` 里的任何东西,依赖方向永远是单向的。坐标转换、PID 增益、NMEA 解析等任何模块特定逻辑都不允许出现在这里——如果你觉得某段代码"应该放进 common",先确认它是不是业务逻辑,是的话应该留在对应模块内。
+
+## 各模块文档
+
+每个模块的 `README.md` 都用真实(而非过时想象中)的 JSON 样例文档化其 WebSocket/串口契约、控制消息、以及 record/replay 工作流:[00_QR](00_QR/)(纯静态页面,不需要单独 README,直接看 `qr_server.py`)、[01_IMU](01_IMU/README.md)、[02_RTK](02_RTK/README.md)、[03_Nav](03_Nav/README.md)、[04_Robot](04_Robot/README.md)、[05_AutoNav](05_AutoNav/README.md)、[06_Camera](06_Camera/README.md)。
+
+## 运行
 
 ```bash
-pip install pyserial websockets depthai opencv-python numpy
+# 启动全部 7 个 bridge,每个在独立 tmux 窗口
 ./start_bridges.sh
+
+# 通过菜单启动 listen_*/replay_*/send_demo 等临时调试工具
+./start_helpers.sh
+
+# 把所有正在运行的 bridge 的 WS 输出(+ 两路摄像头 MJPEG 视频)
+# 录制到一个带时间戳的统一 session 目录
+python3 record_all.py
 ```
 
-一键在 tmux 中启动 01_IMU · 02_RTK · 03_Nav · 04_Robot · 06_Camera，各自独立窗口。
-在窗口里按 `Ctrl+C` 只会停止当前进程，不会关闭 tmux 窗口。
-后台挂起：`Ctrl-B D` · 结束会话：`tmux kill-session -t bridges`
+## 配置
 
----
+所有可调参数都在仓库根目录的 `config.py` 里,按模块编号分组。改完文件后重启对应 bridge 即可生效——默认不新增命令行参数入口。每个消费者模块都显式定义自己的上游 WebSocket 地址变量(例如 `ROBOT_IMU_WS`/`ROBOT_RTK_WS`),而不是借用别的模块的,这样改动一个模块的上游地址不会误伤另一个模块。
 
-面向农业机器人的实时传感器融合平台，整合 BNO085 惯性测量单元与 RTK-GPS 接收器。系统由七个独立模块组成 —— IMU 可视化、RTK 地图、集成导航面板、机器人控制、自主导航引擎、摄像头流、数据录制 —— 通过 WebSocket 桥接通信，全部在浏览器中查看。
+## record/replay 工作流
 
-## 系统架构
+1. 接上真实硬件运行对应 bridge,同时跑它的 `listen_*.py`,录制一份 `data_log/*.jsonl` 基准样本。
+2. 如果这份样本对离线开发普遍有用,可以把它提交进仓库。
+3. 下游任何人都可以运行 `replay_*.py`(默认读取 `data_log/` 下最新的一个文件),在没有硬件的情况下拿到同样的 WebSocket 契约。
 
-```
-┌─────────────┐     serial/SPI      ┌──────────────┐   WS :8766
-│  BNO085 IMU │ ──────────────────→ │  imu_bridge  │ ──────────┐
-│  (ESP32-C3) │                     │  (01_IMU)    │           │
-└─────────────┘                     └──────────────┘           │
-                                                               ▼
-┌─────────────┐     serial/UART     ┌──────────────┐   WS :8776    ┌──────────────┐  WS :8786
-│  RTK GPS    │ ──────────────────→ │  rtk_bridge  │ ──────────┬──→│  nav_bridge  │ ─────────→  浏览器
-│  接收器     │                     │  (02_RTK)    │           │   │  (03_Nav)    │           http :8785
-└─────────────┘                     └──────────────┘           │   └──────────────┘
-                                                               │          ▲
-                                                               └──────────┘
+## 固件
 
-┌─────────────┐     serial/USB-CDC  ┌───────────────┐  WS :8796
-│  Farm-ng    │ ←──────────────────→│  robot_bridge │ ─────────→  浏览器
-│  Amiga CAN  │   (O:/S: + WASD/V) │  (04_Robot)   │           http :8795
-│ (Feather M4)│                     └───────────────┘
-└─────────────┘                            ▲
-                                           │
-                    ┌──────────────────┐    │  WS :8806
-                    │  autonav_bridge  │────┤─────────→  浏览器
-                    │  (05_AutoNav)    │    │           http :8805
-                    └──────────────────┘    │
-                      ▲ IMU  ▲ RTK         │ 速度指令
-                      │      │             │
-                    ┌──────────────────┐    │  WS :8826
-                    │   sim/replay hub │────┘─────────→  浏览器
-                    │  (07_SimReplay)  │
-                    └──────────────────┘
-
-┌─────────────┐                      ┌───────────────┐  WS :8816
-│  OAK-D PoE  │ ──── TCP/IP ───────→ │ camera_bridge │ ─────────→  浏览器
-│  摄像头     │     depthai v3       │  (06_Camera)  │           http :8815
-└─────────────┘                      └───────────────┘       MJPEG :8080/8081
-```
-
-每个桥接器同时在 HTTP 端口提供静态网页 UI：
-
-| 模块 | HTTP | WebSocket | 说明 |
-|------|------|-----------|------|
-| `01_IMU` | 8765 | 8766 | 3D IMU 姿态 + 传感器数据卡片 |
-| `02_RTK` | 8775 | 8776 | Leaflet 地图 + 路径点管理 |
-| `03_Nav` | 8785 | 8786 | 集成面板（3D + 地图 + 全部数据面板） |
-| `04_Robot` | 8795 | 8796 | Amiga 机器人控制器（遥测 + WASD/速度控制） |
-| `05_AutoNav` | 8805 | 8806 | 自主导航引擎（GPS+IMU PID/PurePursuit 控制） |
-| `06_Camera` | 8815 | 8816 | OAK-D 摄像头 MJPEG 流（视频在 8080/8081） |
-| `07_SimReplay` | - | - | 离线联调用回放/模拟工具集合 |
-
-## 目录结构
-
-```
-IMU_GPS/
-├── config.py                    # ★ 所有模块（01–06）的超参数统一配置文件
-├── start_bridges.sh             # ★ 一键启动脚本（01–04 + 06，tmux 独立窗口）
-│
-├── 01_IMU/
-│   ├── bno085_esp32c3/          # ESP32-C3 Arduino 固件（SPI，50 Hz JSON 输出）
-│   │   └── bno085_esp32c3.ino
-│   ├── imu_bridge.py            # 串口 → WebSocket 桥接
-│   ├── listen_imu_websocket.py  # 调试用 WS 客户端
-│   ├── requirements.txt
-│   └── web_static/
-│
-├── 02_RTK/
-│   ├── rtk_bridge.py            # NMEA 串口 → WebSocket 桥接
-│   ├── requirements.txt
-│   └── web_static/
-│
-├── 03_Nav/
-│   ├── nav_bridge.py            # IMU + RTK 聚合器 → 统一 WS 数据流
-│   ├── listen_nav_websocket.py  # 调试用 WS 客户端
-│   ├── requirements.txt
-│   └── web_static/
-│
-├── 04_Robot/
-│   ├── robot_bridge.py          # Amiga 串口桥接（双向）
-│   ├── listen_robot_websocket.py
-│   ├── send_robot_only_demo.py
-│   ├── requirements.txt
-│   └── web_static/
-│
-├── 05_AutoNav/
-│   ├── autonav_bridge.py        # 自主导航引擎（PID/PurePursuit + GPS 滤波器）
-│   ├── requirements.txt
-│   └── web_static/
-│
-├── 06_Camera/
-│   ├── camera_bridge.py         # OAK-D MJPEG 桥接 + 两层插件编排器
-│   ├── plugins/
-│   │   ├── __init__.py          # FrameProcessor ABC + 注册表 + 自动发现
-│   │   ├── simple_color.py      # RGB 直通预览
-│   │   ├── path_cam.py          # 黄色胶带路径检测（HSV 掩码）
-│   │   ├── depth_cam.py         # 深度彩图 + RGB 混合（需要 --stereo）
-│   │   ├── obstacle_cam.py      # 近障预警（需要 --stereo --disparity）
-│   │   └── disparity_demo.py    # 最简视差 demo（需要 --stereo --disparity）
-│   ├── requirements.txt
-│   └── web_static/
-│       ├── index.html
-│       ├── camera_visualizer.js
-│       ├── style.css
-│       └── snapshots/           # 自动创建；存放各次会话的 HTML 像素检视快照
-│
-├── 07_SimReplay/
-│   ├── start_nav_with_replay.sh # 一键：01回放 + 02回放 + 03导航 + 监听（tmux）
-│   ├── sim_robot_ws_server.py   # 本地机器人 WS 模拟器
-│   ├── demo_filter_by_type.py   # 模拟器/机器人 WS 按类型过滤监听示例
-│   └── README.md
-│
-├── CIRCUITPY/                   # Adafruit Feather M4 CAN 的 CircuitPython 固件
-│   └── code.py
-│
-└── CLAUDE.md                    # AI 编码规范
-```
-
-## 全局配置 — `config.py`
-
-所有模块（01–06）的默认超参数集中在一个文件中管理。修改后重启对应桥接器即可生效，无需改动各模块脚本：
-
-```python
-# 01_IMU
-IMU_SERIAL_PORT  = "/dev/cu.usbmodem101"
-IMU_BAUD         = 921600
-IMU_WS_PORT      = 8765
-IMU_NORTH_OFFSET = 0.0              # 航向校准偏移（度）
-
-# 05_AutoNav — 路径跟踪（完整说明见 05_AutoNav/README_zh.md）
-AUTONAV_LOOKAHEAD_M       = 1.0    # Pure Pursuit 前视距离（m）
-AUTONAV_REACH_TOL_M       = 0.5    # 航点到达判定半径（m）
-AUTONAV_ARRIVE_FRAMES     = 1      # 连续帧数确认到达
-AUTONAV_DECEL_RADIUS_M    = 1.5    # 终点减速开始距离（m）
-AUTONAV_MAX_LINEAR_VEL    = 1.0    # 最大前进速度（m/s）
-AUTONAV_MIN_LINEAR_VEL    = 0.1    # 减速最低速度（m/s）
-AUTONAV_MAX_ANGULAR_VEL   = 1.0    # 最大角速度（rad/s）
-AUTONAV_MANUAL_SPEED      = 0.4    # W/S 手动驾驶速度（m/s）
-AUTONAV_TURN_IN_PLACE_DEG = 10.0   # 超过此误差停止前进原地转向（°）
-AUTONAV_TURN_SLOWDOWN     = True   # 转向时按误差比例降速
-AUTONAV_DEAD_ZONE_DEG     = 3.0    # 不纠偏的误差死区（°）
-AUTONAV_PID_KP            = 0.15   # PID 比例增益
-AUTONAV_PID_KI            = 0.005  # PID 积分增益
-AUTONAV_PID_KD            = 0.15   # PID 微分增益
-AUTONAV_MA_WINDOW         = 5      # GPS 滑动平均窗口（帧）
-AUTONAV_HEADING_ALPHA     = 0.3    # heading 低通滤波系数（0–1）
-
-# 06_Camera
-CAM_FPS              = 25
-CAM_WIDTH            = 640
-CAM_HEIGHT           = 400
-CAM_ENABLE_STEREO    = True         # 开启深度流
-CAM_ENABLE_DISPARITY = False        # 开启原始视差流（额外负载，默认关闭）
-```
-
-CLI 参数优先级高于 `config.py`，可在运行时临时覆盖任意参数。
-
-## 快速开始
-
-### 环境要求
-
-- Python 3.10+
-- Arduino IDE（用于烧录固件）
-- `tmux`（用于 `start_bridges.sh`）
-
-### 1. 安装依赖
-
-```bash
-pip install pyserial websockets
-```
-
-### 2. 一键启动所有桥接器（推荐）
-
-```bash
-./start_bridges.sh
-```
-
-在单个 tmux session 中以独立窗口启动模块 01–04 和 06：
-
-```
-窗口 1：01_IMU
-窗口 2：02_RTK
-窗口 3：03_Nav
-窗口 4：04_Robot
-窗口 5：06_Camera
-```
-
-- 后台挂起：`Ctrl-B D`
-- 结束会话：`tmux kill-session -t bridges`
-- 重新连接：再次运行 `./start_bridges.sh`（session 已存在时直接 attach）
-
-### 3. 单独运行各模块
-
-```bash
-cd 01_IMU && python imu_bridge.py          # http://localhost:8765
-cd 02_RTK && python rtk_bridge.py          # http://localhost:8775
-cd 03_Nav && python nav_bridge.py          # http://localhost:8785
-cd 04_Robot && python robot_bridge.py      # http://localhost:8795
-cd 05_AutoNav && python autonav_bridge.py  # http://localhost:8805
-cd 06_Camera && python camera_bridge.py   # http://localhost:8815
-cd 07_SimReplay && ./start_nav_with_replay.sh # 用 01/02 回放喂给 03_Nav
-```
-
-### 4. 摄像头 — 深度与视差开关
-
-```bash
-# 仅 RGB（最流畅，负载最低）
-python camera_bridge.py
-
-# RGB + 深度（推荐，3D 感知）
-python camera_bridge.py --stereo
-
-# RGB + 深度 + 原始视差（启用 obstacle_cam / disparity_demo 插件）
-python camera_bridge.py --stereo --disparity
-```
-
-或在 `config.py` 中永久设置：
-
-```python
-CAM_ENABLE_STEREO    = True
-CAM_ENABLE_DISPARITY = False   # 仅调试视差插件时开启
-```
-
-## 模块详情
-
-### 01_IMU — IMU 桥接器
-
-- **数据流**：`串口 → SerialReader → IMUPipeline → asyncio.Queue → WebSocketServer → 浏览器`
-- **Pipeline 阶段**：`_parse → _enrich_euler（航向计算）→ _enrich_hz → _serialize`
-- **功能**：实时 3D 姿态（Three.js）、罗盘 HUD、北偏校准、锁定偏航、顶视北向视图、11 个传感器卡片；**航向在后端计算**后广播
-- **调试工具**：`listen_imu_websocket.py`
-
-### 02_RTK — RTK 桥接器
-
-- **数据流**：`串口 → SerialReader → NMEAPipeline → BroadcastLoop → WebSocketServer → 浏览器`
-- **Pipeline 阶段**：`_verify_checksum → _dispatch → _parse_gga / _parse_rmc`
-- **功能**：Leaflet 地图（卫星/OSM/离线切片）、路径点增删改查、CSV 导入导出、路径模拟、轨迹记录、中英文切换
-
-### 03_Nav — 导航面板
-
-- **数据流**：`imu_bridge(WS) + rtk_bridge(WS) → NavLoop(10 Hz) → NavController → WebSocketServer → 浏览器`
-- **布局**：上方 3D 视图（40%）+ 下方地图（60%）| 右侧数据面板（320 px）
-- **功能**：单页整合所有 IMU + RTK 功能、路径点到达判定、IMU 后端航向直接转发
-- **调试工具**：`listen_nav_websocket.py`
-
-### 04_Robot — Amiga 机器人控制器
-
-- **数据流**：`串口 ↔ SerialReader → RobotPipeline → asyncio.Queue → WebSocketServer → 浏览器`
-- **Pipeline 阶段**：`_parse → _enrich_state → _enrich_hz → _enrich_odometry → _serialize`
-- **串口协议**：`O:{speed},{ang_rate},{state},{soc}` 遥测（~20 Hz）；接受 WASD 和 `V{speed},{ang_rate}\n` 速度命令
-- **功能**：WASD/按钮控制、速度滑块、紧急停止、电量进度条、里程计、Three.js 俯视图
-- **调试工具**：`listen_robot_websocket.py`、`send_robot_only_demo.py`
-
-### 05_AutoNav — 自主导航引擎
-
-- **数据流**：`imu_bridge :8766 + rtk_bridge :8776 → AutoNavLoop → algo.compute() → robot_bridge :8889`
-- **算法**：Pure Pursuit（前视航点选择）+ PID（航向误差 → 角速度）
-- **状态机**：`idle → running → paused → arrived`
-- **Dashboard 功能**：实时罗盘、航点表格（7 点滑动窗口）、W/S 手动驾驶、航向校准（MARK POS → CALIBRATE 向 `01_IMU` 发送 `set_north_offset`）
-- **运行时加载 CSV**：通过 LOAD CSV 按钮无需重启即可更换航点文件
-- **所有调参参数在 `config.py`**：PID 增益、前视距离、到达半径、滤波器、速度等——完整参数说明见 `05_AutoNav/README_zh.md`
-
-### 06_Camera — OAK-D 摄像头桥接器
-
-#### 两层架构
-
-```
-第一层 — CameraDevice（启动时初始化一次，切换插件时不重启）
-  ├─ RGB 节点       → rgb 队列        （始终开启）
-  ├─ StereoDepth 节点 → depth 队列   （--stereo 时开启）
-  └─ StereoDepth 节点 → disparity 队列（--stereo --disparity 时开启）
-
-第二层 — FrameProcessor（原子切换，零停流）
-  plugin.required_streams() → ['rgb'] | ['rgb','depth'] | ...
-  plugin.process(frames)    → 输出帧 → MJPEG 编码 → 浏览器
-```
-
-#### 插件系统
-
-在 `plugins/` 目录下新建 `.py` 文件，写一个带 `@register_processor` 装饰器的 `FrameProcessor` 子类即可。启动时自动发现，浏览器下拉框中自动出现，无需修改任何现有代码：
-
-```python
-from . import FrameProcessor, register_processor
-
-@register_processor
-class MyPlugin(FrameProcessor):
-    PROCESSOR_NAME = "my_plugin"
-    PROCESSOR_LABEL = "我的插件"
-    PROCESSOR_DESCRIPTION = "..."
-
-    @classmethod
-    def required_streams(cls):
-        return ["rgb"]           # 声明需要哪些流
-
-    def process(self, frames):
-        img = frames["rgb"]     # ndarray（BGR，uint8）
-        # ... 你的处理逻辑 ...
-        return img
-```
-
-内置插件：
-
-| 插件 | 需要的流 | 说明 |
-|------|---------|------|
-| `simple_color` | rgb | RGB 直通预览 |
-| `path_cam` | rgb | 黄色胶带路径检测（HSV 掩码 + 轮廓评分） |
-| `depth_cam` | rgb, depth | 深度彩图 + RGB 混合显示 |
-| `obstacle_cam` | rgb, disparity | 近障预警（DANGER / CAUTION / CLEAR 三档） |
-| `disparity_demo` | disparity | 最简原始视差彩图 —— 供二次开发参考 |
-
-#### 帧快照（像素检视工具）
-
-在浏览器控制面板点击 **Capture Frame**，当前帧以自包含 HTML 文件形式保存到 `web_static/snapshots/`，并自动在新标签页打开：
-
-- Canvas 渲染捕获的输出帧
-- 鼠标悬停在任意像素上，显示：
-  - 所有插件：Canvas RGB 值
-  - `rgb` 流：传感器原始 R/G/B
-  - `depth` 流：距离（**毫米**）
-  - `disparity` 流：视差值（**像素**）
-
-#### 流控制开关
-
-| CLI 参数 | `config.py` 键 | 默认值 | 作用 |
-|----------|---------------|--------|------|
-| `--stereo` / `--no-stereo` | `CAM_ENABLE_STEREO` | `True` | 开启左右目 + StereoDepth → depth 流 |
-| `--disparity` / `--no-disparity` | `CAM_ENABLE_DISPARITY` | `False` | 额外开启原始视差队列（增加 CPU/带宽负载） |
-
-**推荐组合**：
-
-| 场景 | 配置 |
-|------|------|
-| 仅 RGB，追求最流畅 | `STEREO=False` |
-| 需要深度感知（推荐）| `STEREO=True, DISPARITY=False` |
-| 调试视差插件 | `STEREO=True, DISPARITY=True` |
-
-### 07_SimReplay — 回放/模拟中心
-
-- **目标**：通过录制数据回放，让下游模块在无硬件时也能联调。
-- **一键链路**：`./07_SimReplay/start_nav_with_replay.sh` 会启动 IMU 回放 + RTK 回放 + Nav bridge + Nav 监听。
-- **典型场景**：`03_Nav` 依赖 `01_IMU` 和 `02_RTK` 输入，但手头没有设备时。
-
-## 硬件连接
-
-### BNO085 IMU（ESP32-C3）
-
-| 信号 | GPIO |
-|------|------|
-| MOSI | 1 |
-| MISO | 6 |
-| SCK | 7 |
-| CS | 0 |
-| INT | 5 |
-| RST | 2 |
-| BOOT | 9（长按 3 秒保存校准） |
-
-- **库**：Adafruit BNO08x（Arduino Library Manager）
-- **接口**：SPI，1 MHz
-- **输出**：921600 波特率 UART JSON，约 50 Hz
-
-### RTK GPS 接收器
-
-- **接口**：UART（NMEA 0183）
-- **默认波特率**：9600
-- **解析语句**：GGA（位置/定位/卫星）、RMC（速度/航向）
-
-### OAK-D PoE 摄像头
-
-- **连接方式**：TCP/IP（depthai v3，`dai.DeviceInfo(ip)`）
-- **默认 IP**：cam1 = `10.95.76.11`，cam2 = `10.95.76.10`
-- **使用插槽**：CAM_A（RGB）、CAM_B（左目）、CAM_C（右目）
-- **立体输出分辨率**：左右目各 640×400 px；RGB 可在 `config.py` 中配置（默认 640×400）
-
-## 代码规范
-
-所有代码遵循 `CLAUDE.md` 中定义的规范：
-
-- OOP + Pipeline 设计模式
-- `@dataclass` 作为数据模型
-- I/O 边界处标注 `INPUT / CORE / OUTPUT` 横幅
-- 代码注释、日志、CLI 输出全部使用英文
-- 使用 `logging` 模块，同时输出到 `.log` 文件
-
-## 许可证
-
-内部项目 —— 未发布。
+`CIRCUITPY/`(Feather M4,通过 CAN 总线驱动 Amiga 电控——串口协议见 `04_Robot/README.md`)和 `01_IMU/bno085_esp32c3/bno085_esp32c3.ino`(BNO085 IMU 固件——协议见 `01_IMU/README.md`)均原样保留、未做改动;两份协议此前都已验证正确,不在本次重写范围内。

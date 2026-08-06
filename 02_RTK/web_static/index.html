@@ -13,7 +13,6 @@
       <span class="dot" id="statusDot"></span>
       <span id="statusText">Disconnected</span>
     </div>
-    <button id="langToggle" class="lang-toggle" title="Switch to Chinese" aria-label="Switch language">◌</button>
   </header>
 
   <section class="toolbar">
@@ -54,7 +53,6 @@
       <!-- hidden stubs to keep rtk_visualizer.js happy -->
       <div style="display:none">
         <h3 id="cardCurrentTitle"></h3>
-        <h3 id="cardDualTitle"></h3>
         <h3 id="cardMissionTitle"></h3>
         <h3 id="cardEventTitle"></h3>
         <span id="labelLat"></span>
@@ -62,8 +60,6 @@
         <span id="labelSource"></span>
         <span id="labelSats"></span>
         <span id="labelSpeed"></span>
-        <span id="labelHeading"></span>
-        <span id="labelBaseline"></span>
         <span id="labelReached"></span>
         <span id="labelTarget"></span>
         <span id="labelDistance"></span>
@@ -74,12 +70,9 @@
         <strong id="satVal"></strong>
         <strong id="hdopVal"></strong>
         <strong id="spdVal"></strong>
-        <strong id="headingVal"></strong>
-        <strong id="baselineVal"></strong>
         <strong id="reachVal"></strong>
         <strong id="targetVal"></strong>
         <strong id="distVal"></strong>
-        <div id="dualRtkInfo"></div>
         <ul id="eventList"></ul>
       </div>
     </aside>
@@ -87,7 +80,9 @@
 
   <script>
     const rawJson = document.getElementById('raw-json');
-    const wsData = new WebSocket('ws://localhost:8776');
+    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsPort = Number(location.port || 8775) + 1;
+    const wsData = new WebSocket(`${wsProto}://${location.hostname}:${wsPort}`);
     wsData.onmessage = e => { rawJson.textContent = JSON.stringify(JSON.parse(e.data), null, 2); };
   </script>
 
