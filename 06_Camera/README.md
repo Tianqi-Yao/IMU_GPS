@@ -1,5 +1,7 @@
 # 06_Camera — OAK-D Camera Streaming + Processing Plugins
 
+*[中文版](README_zh.md)*
+
 Streams live video from one or two OAK-D cameras as MJPEG over HTTP, with a
 hot-swappable image-processing plugin pipeline and a WebSocket status feed
 for the dashboard.

@@ -1,5 +1,7 @@
 # 04_Robot — Robot Serial Control Bridge
 
+*[中文版](README_zh.md)*
+
 Drives the robot chassis (Feather M4 + CAN bus to an Amiga VCU) from
 browser joystick input or 05_AutoNav, and relays telemetry (odometry,
 battery, upstream IMU/RTK) to any WebSocket consumer.

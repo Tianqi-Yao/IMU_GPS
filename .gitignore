@@ -13,3 +13,4 @@ data_log
 
 06_Camera/web_static/snapshots/*.html
 06_Camera/plugins/models/*.task
+DATA.md

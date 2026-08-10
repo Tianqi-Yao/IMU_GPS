@@ -1,5 +1,7 @@
 # 05_AutoNav — Autonomous Navigation
 
+*[中文版](README_zh.md)*
+
 Drives the robot along a fixed waypoint path using live IMU heading + RTK
 position, controlling 04_Robot over WebSocket. This module has the
 project's clearest bridge/algorithm split: **all math lives in

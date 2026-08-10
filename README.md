@@ -1,5 +1,7 @@
 # IMU_GPS v2
 
+*[中文版](README_zh.md)*
+
 A robot perception + autonomous-navigation stack for a Raspberry Pi:
 IMU (attitude) and RTK GPS (precision position) feed a real-time WebSocket
 dashboard; an autonomous navigation module drives a chassis (Feather M4 +
@@ -65,8 +67,9 @@ something module-specific in `common/`, it belongs in that module instead.
 
 Each module's `README.md` documents its real (not aspirational) WebSocket/
 serial contract with a JSON example, its control messages, and its
-record/replay workflow: [00_QR](00_QR/) (no README needed — static page,
-see `qr_server.py`), [01_IMU](01_IMU/README.md), [02_RTK](02_RTK/README.md),
+record/replay workflow (each also has a `README_zh.md` Chinese version):
+[00_QR](00_QR/) (no README needed — static page, see `qr_server.py`),
+[01_IMU](01_IMU/README.md), [02_RTK](02_RTK/README.md),
 [03_Nav](03_Nav/README.md), [04_Robot](04_Robot/README.md),
 [05_AutoNav](05_AutoNav/README.md), [06_Camera](06_Camera/README.md).
 

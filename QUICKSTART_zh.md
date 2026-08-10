@@ -1,5 +1,7 @@
 # 快速开始
 
+*[English](QUICKSTART.md)*
+
 ## 一、环境准备
 
 ```bash
@@ -175,4 +177,4 @@ data_log/session_{ts}/                       # record_all.py 统一输出目录
 06_Camera/data_log/camera_raw_{ts}.jsonl     # 单独录制 Camera
 ```
 
-> 详细的架构说明、`common/` 框架层设计、各模块 JSON 契约见 [README_zh.md](README_zh.md) 及各模块目录下的 `README.md`。
+> 详细的架构说明、`common/` 框架层设计、各模块 JSON 契约见 [README_zh.md](README_zh.md) 及各模块目录下的 `README_zh.md`。

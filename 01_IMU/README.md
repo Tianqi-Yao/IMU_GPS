@@ -1,5 +1,7 @@
 # 01_IMU — BNO085 Attitude Bridge
 
+*[中文版](README_zh.md)*
+
 Reads orientation data from a BNO085 IMU (via an ESP32C3 running
 `bno085_esp32c3/bno085_esp32c3.ino`) over USB serial, and broadcasts it as
 JSON over WebSocket for any downstream consumer (browser dashboard,

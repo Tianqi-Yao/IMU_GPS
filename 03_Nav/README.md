@@ -1,5 +1,7 @@
 # 03_Nav — IMU + RTK Passthrough
 
+*[中文版](README_zh.md)*
+
 **Read this before assuming "Nav" means fusion.** Despite subscribing to
 both 01_IMU and 02_RTK, this bridge does **not** perform any sensor fusion,
 coordinate-frame unification, filtering, or arrival/heading computation. It

@@ -1,5 +1,7 @@
 # 02_RTK — RTK GPS Bridge
 
+*[中文版](README_zh.md)*
+
 Reads NMEA 0183 sentences (GGA/RMC) from an RTK GPS receiver over serial and
 broadcasts a single-source position fix as JSON over WebSocket.
 

@@ -1,5 +1,7 @@
 # IMU_GPS v2
 
+*[English](README.md)*
+
 面向树莓派的机器人感知与自动导航系统:IMU(姿态)和 RTK GPS(高精度定位)把数据实时广播给浏览器仪表盘;自动导航模块驱动机器人底盘(Feather M4 单片机 + CAN 总线到 Amiga 电控);OAK-D 深度相机模块通过一套可热插拔的图像处理插件推流视频;二维码启动页让手机在局域网内一键访问全部模块。
 
 这是根据 `doc/REFACTOR_PROMPT.md` 的架构评审,对原项目做的一次从零重写——对外契约(黑盒边界)保持不变,内部实现全部清理。**本目录完全独立:这里的任何代码都不 import `v2/` 之外的东西。**
@@ -43,7 +45,7 @@ common/
 
 ## 各模块文档
 
-每个模块的 `README.md` 都用真实(而非过时想象中)的 JSON 样例文档化其 WebSocket/串口契约、控制消息、以及 record/replay 工作流:[00_QR](00_QR/)(纯静态页面,不需要单独 README,直接看 `qr_server.py`)、[01_IMU](01_IMU/README.md)、[02_RTK](02_RTK/README.md)、[03_Nav](03_Nav/README.md)、[04_Robot](04_Robot/README.md)、[05_AutoNav](05_AutoNav/README.md)、[06_Camera](06_Camera/README.md)。
+每个模块的 `README.md` 都用真实(而非过时想象中)的 JSON 样例文档化其 WebSocket/串口契约、控制消息、以及 record/replay 工作流(每个模块也都配了中文版 `README_zh.md`):[00_QR](00_QR/)(纯静态页面,不需要单独 README,直接看 `qr_server.py`)、[01_IMU](01_IMU/README_zh.md)、[02_RTK](02_RTK/README_zh.md)、[03_Nav](03_Nav/README_zh.md)、[04_Robot](04_Robot/README_zh.md)、[05_AutoNav](05_AutoNav/README_zh.md)、[06_Camera](06_Camera/README_zh.md)。
 
 ## 运行
 
