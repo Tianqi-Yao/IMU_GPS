@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SysMon — CPU Thermal / Load / Memory Monitor</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header>
+    <h1>SysMon — CPU Thermal / Load / Memory Monitor</h1>
+    <div class="status-indicator">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Disconnected</span>
+    </div>
+  </header>
+
+  <div class="main-container">
+
+    <!-- ===== Overall status banner ===== -->
+    <div class="overall-banner" id="overallBanner">
+      <span id="bannerText">—</span>
+    </div>
+
+    <!-- ===== Stat cards ===== -->
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card" id="cardThrottled">
+        <div class="stat-label">Throttle Status</div>
+        <div class="stat-value" id="valThrottled">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">CPU Speed Limit</div>
+        <div class="stat-value" id="valSpeedLimit">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">CPU Scheduler Limit</div>
+        <div class="stat-value" id="valSchedLimit">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Load Avg (1m / 5m / 15m)</div>
+        <div class="stat-value" id="valLoadAvg">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">CPU Cores</div>
+        <div class="stat-value" id="valCpuCount">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Swap Used</div>
+        <div class="stat-value" id="valSwap">—</div>
+      </div>
+      <div class="stat-card" id="cardMemPressure">
+        <div class="stat-label">Memory Pressure</div>
+        <div class="stat-value" id="valMemPressure">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Last Update</div>
+        <div class="stat-value" id="valLastUpdate">—</div>
+      </div>
+    </div>
+
+    <!-- ===== History import toolbar ===== -->
+    <div class="toolbar">
+      <label class="file-label">
+        Load history log (sysmon_data/*.jsonl)
+        <input type="file" id="historyFile" accept=".jsonl,.txt" />
+      </label>
+      <span id="historyInfo" class="history-info"></span>
+      <button class="btn-accent" id="btnBackToLive" style="display:none">Back to Live</button>
+    </div>
+
+    <!-- ===== Charts ===== -->
+    <div class="charts-grid">
+      <div class="chart-panel">
+        <div class="chart-title">CPU Speed / Scheduler Limit
+          <span class="legend"><i style="background:#58a6ff"></i>speed_limit <i style="background:#d29922"></i>scheduler_limit</span>
+        </div>
+        <div class="chart-subtitle">% of full speed — 100% = normal, lower = throttled</div>
+        <canvas id="chartLimit" height="140"></canvas>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-title">Load Average — 1 / 5 / 15 min
+          <span class="legend"><i style="background:#3fb950"></i>1m <i style="background:#58a6ff"></i>5m <i style="background:#d29922"></i>15m <i style="background:#7d8590"></i>cores</span>
+        </div>
+        <div class="chart-subtitle">Average number of processes wanting a CPU core. Dashed line = CPU core count — above it means more demand than capacity.</div>
+        <canvas id="chartLoad" height="140"></canvas>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-title">Swap Used (MB)
+          <span class="legend"><i style="background:#f85149"></i>swap_used_mb</span>
+        </div>
+        <div class="chart-subtitle">0 = normal. Sustained nonzero means the system ran out of RAM and is paging to disk.</div>
+        <canvas id="chartSwap" height="140"></canvas>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-title">Memory Pressure Level
+          <span class="legend"><i style="background:#39d0d8"></i>Normal / Warn / Critical</span>
+        </div>
+        <div class="chart-subtitle">Same signal as Activity Monitor's memory-pressure gauge.</div>
+        <canvas id="chartMem" height="140"></canvas>
+      </div>
+    </div>
+
+    <div class="raw-panel">
+      <div class="chart-title">Latest Sample (raw JSON)</div>
+      <pre id="rawJson">waiting...</pre>
+    </div>
+
+  </div>
+
+  <script src="sysmon_visualizer.js"></script>
+
+</body>
+</html>

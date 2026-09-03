@@ -46,6 +46,7 @@ MODULES = [
     ("04 Robot",   _cfg.ROBOT_WS_PORT if _cfg else 8888,   "Robot Controller"),
     ("05 AutoNav", _cfg.AUTONAV_WS_PORT if _cfg else 8805, "Autonomous Navigation"),
     ("06 Camera",  _cfg.CAM_WS_PORT if _cfg else 8815,     "Camera Stream"),
+    ("07 SysMon",  _cfg.SYSMON_WS_PORT if _cfg else 8825,  "System Health Monitor"),
 ]
 
 

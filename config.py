@@ -133,3 +133,11 @@ CAM_MJPEG_QUALITY  = 80              # MJPEG compression quality (1-100)
 CAM_DEFAULT_PLUGIN = "simple_color"  # Default processing plugin
 CAM_ENABLE_STEREO     = True         # Enable stereo depth (requires Left/Right/StereoDepth nodes)
 CAM_ENABLE_DISPARITY  = False        # Enable raw disparity stream alongside depth (adds load; keep False unless debugging)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 07_SysMon  — CPU thermal/load/memory -> WebSocket bridge
+# ══════════════════════════════════════════════════════════════════════════════
+
+SYSMON_WS_PORT      = 8825   # HTTP port; WebSocket = SYSMON_WS_PORT + 1
+SYSMON_INTERVAL_S   = 2.0    # Sample period (seconds)

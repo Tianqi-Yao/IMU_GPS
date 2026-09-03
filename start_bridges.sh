@@ -28,6 +28,7 @@ start_window "03_Nav"     "cd '$ROOT/03_Nav'     && python3 nav_bridge.py"
 start_window "04_Robot"   "cd '$ROOT/04_Robot'   && python3 robot_bridge.py"
 start_window "05_AutoNav" "cd '$ROOT/05_AutoNav' && python3 autonav_bridge.py"
 start_window "06_Camera"  "cd '$ROOT/06_Camera'  && python3 camera_bridge.py"
+start_window "07_SysMon"  "cd '$ROOT/07_SysMon'  && python3 sysmon_bridge.py"
 
 tmux select-window -t "$SESSION:01_IMU"
 tmux attach-session -t "$SESSION"

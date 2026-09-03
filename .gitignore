@@ -10,6 +10,7 @@ CLAUDE.md
 doc/*
 
 data_log
+07_SysMon/sysmon_data
 
 06_Camera/web_static/snapshots/*.html
 06_Camera/plugins/models/*.task

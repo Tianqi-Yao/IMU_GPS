@@ -46,6 +46,7 @@ CAM2_STREAM_PORT = _c("CAM2_STREAM_PORT", 8081)
 CAM_FPS = _c("CAM_FPS", 25)
 CAM_WIDTH = _c("CAM_WIDTH", 640)
 CAM_HEIGHT = _c("CAM_HEIGHT", 400)
+SYSMON_WS_PORT = _c("SYSMON_WS_PORT", 8825)
 
 WS_STREAMS: List[Tuple[str, str]] = [
     ("imu", f"ws://localhost:{derive_ws_port(IMU_WS_PORT)}"),
@@ -54,6 +55,7 @@ WS_STREAMS: List[Tuple[str, str]] = [
     ("robot", f"ws://localhost:{derive_ws_port(ROBOT_WS_PORT)}"),
     ("autonav", f"ws://localhost:{derive_ws_port(AUTONAV_WS_PORT)}"),
     ("camera_status", f"ws://localhost:{derive_ws_port(CAM_WS_PORT)}"),
+    ("sysmon", f"ws://localhost:{derive_ws_port(SYSMON_WS_PORT)}"),
 ]
 CAM_STREAMS: List[Tuple[str, str]] = [
     ("cam1", f"http://localhost:{CAM1_STREAM_PORT}"),
