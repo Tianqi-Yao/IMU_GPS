@@ -52,6 +52,10 @@ class FrameProcessor(abc.ABC):
         """Declare configurable params: [{"key", "type", "default", "label"}, ...]"""
         return []
 
+    def __init__(self, **kwargs) -> None:
+        """Accepts and ignores config_schema kwargs plus framework-supplied
+        ones (e.g. cam_id) by default; override to read the ones you need."""
+
     def reconfigure(self, **kwargs) -> None:
         """Apply updated config without recreating the processor (optional override)."""
 

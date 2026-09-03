@@ -222,6 +222,7 @@ header h1 {
 /* ===== Camera select ===== */
 .cam-select {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -298,15 +299,10 @@ header h1 {
 
 .btn-stop:hover { background: #da3633; }
 
-/* ===== URL links ===== */
+/* ===== URL labels (display-only, not clickable — ws:// isn't browser-navigable) ===== */
 .url-link {
   color: var(--accent);
-  text-decoration: none;
   font-size: 0.78rem;
-}
-
-.url-link:hover {
-  text-decoration: underline;
 }
 
 /* ===== Plugin controls ===== */

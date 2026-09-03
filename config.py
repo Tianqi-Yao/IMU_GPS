@@ -118,20 +118,22 @@ WAYPOINT_MIN_FIX_QUALITY = 4                        # minimum RTK fix_quality to
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 06_Camera  — OAK-D camera MJPEG streaming bridge
+# 06_Camera  — OAK-D camera WebSocket streaming bridge
 # ══════════════════════════════════════════════════════════════════════════════
 
 CAM_WS_PORT        = 8815             # HTTP port; WebSocket = CAM_WS_PORT + 1
 CAM1_IP            = "10.95.76.11"   # OAK-D camera 1 IP address
 CAM2_IP            = "10.95.76.10"   # OAK-D camera 2 IP address
-CAM1_STREAM_PORT   = 8080            # Camera 1 MJPEG stream port
-CAM2_STREAM_PORT   = 8081            # Camera 2 MJPEG stream port
+CAM1_STREAM_PORT   = 8080            # Camera 1 WebSocket stream port
+CAM2_STREAM_PORT   = 8081            # Camera 2 WebSocket stream port
+CAM3_SOURCE        = 0               # Camera 3: plain webcam, OpenCV VideoCapture source (device index or path); set to None to disable
+CAM3_STREAM_PORT   = 8082            # Camera 3 (webcam) WebSocket stream port
 CAM_FPS            = 25              # Frame rate (matches cam_demo/Depth_Align.py)
 CAM_WIDTH          = 640             # Frame width (pixels)
 CAM_HEIGHT         = 400             # Frame height (pixels)
-CAM_MJPEG_QUALITY  = 80              # MJPEG compression quality (1-100)
+CAM_MJPEG_QUALITY  = 35              # JPEG compression quality (1-100); low by design — max speed over image quality
 CAM_DEFAULT_PLUGIN = "simple_color"  # Default processing plugin
-CAM_ENABLE_STEREO     = True         # Enable stereo depth (requires Left/Right/StereoDepth nodes)
+CAM_ENABLE_STEREO     = False        # Enable stereo depth (requires Left/Right/StereoDepth nodes); default plugin doesn't consume it — flip back to True for depth_cam/disparity_demo/path_cam
 CAM_ENABLE_DISPARITY  = False        # Enable raw disparity stream alongside depth (adds load; keep False unless debugging)
 
 

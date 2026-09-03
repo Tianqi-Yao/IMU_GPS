@@ -27,14 +27,18 @@ last wins (see 04_Robot/robot_bridge.py's VelocityRamp) -- so do not run this
 plugin at the same time as 05_AutoNav's autonomous driving or the 04_Robot
 manual joystick page; both would fight this one for control.
 
-If CAM1_IP and CAM2_IP are both configured, camera_bridge.py hands both
-cameras' frames to the *same* processor instance (switch_plugin sets one
-processor object on every MJPEGServer), and each camera runs its own capture
-thread -- so process() can be entered concurrently from two threads. Only
-the first thread to call process() is allowed to run pose detection and
-drive the robot ("driver" camera); the other camera's frames are passed
-through unchanged. This avoids two cameras independently computing and
-sending conflicting drive commands.
+If multiple cameras are configured, camera_bridge.py hands all of them
+frames from the *same* processor instance (switch_plugin sets one processor
+object on every FrameStreamServer), each running its own capture thread --
+so process() can be entered concurrently from several threads. Only the
+camera that was selected in the browser at the moment Apply was clicked
+(passed through as the `cam_id` constructor kwarg -- see switch_plugin's
+`cam_id` param in camera_bridge.py) runs pose detection and drives the
+robot ("driver" camera); every other camera's frames are passed through
+unchanged. This avoids two cameras independently computing and sending
+conflicting drive commands, and -- unlike picking whichever capture thread
+happens to call process() first -- it's deterministic: it's always the
+camera you were looking at when you applied the plugin.
 
 Requires `pip install mediapipe` (not a project-wide dependency; only this
 plugin needs it -- see 06_Camera/README.md). The pose landmarker model
@@ -142,8 +146,7 @@ class PoseControlProcessor(FrameProcessor):
         self._landmarker = mp_vision.PoseLandmarker.create_from_options(options)
         self._next_ts_ms = 0
 
-        self._driver_lock = threading.Lock()
-        self._driver_ident: Optional[int] = None
+        self._driver_cam_id: Optional[int] = kwargs.get("cam_id")
 
         self._robot_ws = None
         self._warned_disconnected = False
@@ -181,15 +184,10 @@ class PoseControlProcessor(FrameProcessor):
         if rgb is None:
             return None
 
-        ident = threading.get_ident()
-        with self._driver_lock:
-            if self._driver_ident is None:
-                self._driver_ident = ident
-            is_driver = self._driver_ident == ident
-        if not is_driver:
-            # Second camera (if CAM1_IP/CAM2_IP are both configured): pass
-            # through only, so it doesn't also detect+drive and fight the
-            # driver camera over the robot's controls.
+        if frames.get("_cam_id") != self._driver_cam_id:
+            # Non-driver camera: pass through only, so it doesn't also
+            # detect+drive and fight the driver camera over the robot's
+            # controls.
             return rgb
 
         h, w = rgb.shape[:2]

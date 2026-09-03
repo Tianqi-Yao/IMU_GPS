@@ -3,7 +3,11 @@
  * Camera Controller dashboard.
  *
  * Connects to camera_bridge WS for status updates and control commands.
- * Displays MJPEG stream via <img> tag pointing at the MJPEG HTTP server.
+ * Displays the camera stream by painting incoming WebSocket binary JPEG
+ * frames onto a <canvas>, always drawing only the latest received frame —
+ * stale/undrawn frames are dropped, never queued, emulating UDP's
+ * best-effort "newest wins" semantics over a transport the browser can
+ * actually receive.
  */
 
 // ── DOM Elements ─────────────────────────────────────────────────────────────
@@ -22,6 +26,7 @@ const videoOverlayText   = document.getElementById("videoOverlayText");
 const overlaySpinner     = document.getElementById("overlaySpinner");
 const btnCam1            = document.getElementById("btnCam1");
 const btnCam2            = document.getElementById("btnCam2");
+const btnCam3            = document.getElementById("btnCam3");
 const btnViewSingle      = document.getElementById("btnViewSingle");
 const btnViewBoth        = document.getElementById("btnViewBoth");
 const streamStatus       = document.getElementById("streamStatus");
@@ -31,10 +36,14 @@ const btnStartCam1       = document.getElementById("btnStartCam1");
 const btnStopCam1        = document.getElementById("btnStopCam1");
 const btnStartCam2       = document.getElementById("btnStartCam2");
 const btnStopCam2        = document.getElementById("btnStopCam2");
+const btnStartCam3       = document.getElementById("btnStartCam3");
+const btnStopCam3        = document.getElementById("btnStopCam3");
 const mjpegUrl1          = document.getElementById("mjpegUrl1");
 const mjpegUrl2          = document.getElementById("mjpegUrl2");
+const mjpegUrl3          = document.getElementById("mjpegUrl3");
 const cam1Clients        = document.getElementById("cam1Clients");
 const cam2Clients        = document.getElementById("cam2Clients");
+const cam3Clients        = document.getElementById("cam3Clients");
 const pluginSelect       = document.getElementById("pluginSelect");
 const activePlugin       = document.getElementById("activePlugin");
 const pluginConfigContainer = document.getElementById("pluginConfigContainer");
@@ -87,6 +96,102 @@ function hideDualOverlay(camId) {
   if (!overlay) return;
   overlay.classList.add("hidden");
 }
+
+// ── Stream canvas (WS binary frames, latest-wins) ──────────────────────────
+//
+// Server-side, a slow/busy client just gets the newest frame on its next
+// turn — stale frames are dropped, never queued. This mirrors that on the
+// client: every incoming frame overwrites `latestBitmap`, and a single
+// requestAnimationFrame loop paints whatever is current at display refresh
+// rate, decoupled from arrival rate. Frames that arrive faster than they
+// can be painted are silently discarded instead of backing up.
+function createStreamCanvas(canvas) {
+  const ctx = canvas.getContext("2d");
+  let ws = null;
+  let currentUrl = null;
+  let latestBitmap = null;
+  let reconnectTimer = null;
+  let reconnectDelay = 500;
+  let gotFirstFrame = false;
+  let cbs = {};
+
+  function drawLoop() {
+    requestAnimationFrame(drawLoop);
+    if (!latestBitmap) return;
+    const bmp = latestBitmap;
+    latestBitmap = null;
+    if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+    }
+    ctx.drawImage(bmp, 0, 0);
+    bmp.close();
+  }
+  requestAnimationFrame(drawLoop);
+
+  function open() {
+    ws = new WebSocket(currentUrl);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => {
+      reconnectDelay = 500;
+      if (cbs.onOpen) cbs.onOpen();
+    };
+    ws.onmessage = (evt) => {
+      createImageBitmap(new Blob([evt.data], { type: "image/jpeg" }))
+        .then((bmp) => {
+          if (latestBitmap) latestBitmap.close();
+          latestBitmap = bmp;
+          if (!gotFirstFrame) {
+            gotFirstFrame = true;
+            if (cbs.onFirstFrame) cbs.onFirstFrame();
+          }
+        })
+        .catch(() => { /* malformed/partial frame — drop it, next one will arrive */ });
+    };
+    ws.onclose = () => {
+      if (cbs.onClose) cbs.onClose();
+      if (currentUrl && !reconnectTimer) {
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          if (currentUrl) open();
+        }, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 3000);
+      }
+    };
+    ws.onerror = () => { try { ws.close(); } catch (e) { /* already closed */ } };
+  }
+
+  return {
+    connect(url, callbacks) {
+      if (currentUrl === url && ws && ws.readyState <= WebSocket.OPEN) return;
+      this.disconnect();
+      currentUrl = url;
+      gotFirstFrame = false;
+      cbs = callbacks || {};
+      open();
+    },
+    disconnect() {
+      currentUrl = null;
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if (ws) {
+        const s = ws;
+        ws = null;
+        s.onclose = null;
+        s.onerror = null;
+        try { s.close(); } catch (e) { /* already closed */ }
+      }
+      if (latestBitmap) { latestBitmap.close(); latestBitmap = null; }
+      canvas.classList.remove("active");
+    },
+    isConnectedTo(url) {
+      return currentUrl === url;
+    },
+  };
+}
+
+const streamCam1Single = createStreamCanvas(mjpegStream);
+const streamCam1Dual = createStreamCanvas(mjpegStreamCam1);
+const streamCam2Dual = createStreamCanvas(mjpegStreamCam2);
 
 function applyViewMode() {
   const both = viewMode === "both";
@@ -160,28 +265,33 @@ function updateUI(data) {
   currentCam = data.cam_selection || 1;
   btnCam1.classList.toggle("active", currentCam === 1);
   btnCam2.classList.toggle("active", currentCam === 2);
+  btnCam3.classList.toggle("active", currentCam === 3);
 
   // Stream status
   const cam1Streaming = Boolean(data.cam1_streaming);
   const cam2Streaming = Boolean(data.cam2_streaming);
-  const isStreaming = currentCam === 1 ? cam1Streaming : cam2Streaming;
-  const selectedFps = currentCam === 1 ? (data.cam1_fps ?? 0) : (data.cam2_fps ?? 0);
+  const cam3Streaming = Boolean(data.cam3_streaming);
+  const streamingByCam = { 1: cam1Streaming, 2: cam2Streaming, 3: cam3Streaming };
+  const fpsByCam = { 1: data.cam1_fps ?? 0, 2: data.cam2_fps ?? 0, 3: data.cam3_fps ?? 0 };
+  const isStreaming = streamingByCam[currentCam];
+  const selectedFps = fpsByCam[currentCam];
   streamStatus.textContent = isStreaming ? "Streaming" : "Stopped";
   streamStatus.style.color = isStreaming ? "var(--green)" : "var(--text-muted)";
   streamFps.textContent = Number(selectedFps).toFixed(1);
   streamRes.textContent = data.width && data.height
     ? `${data.width}x${data.height}` : "—";
 
-  // MJPEG URLs
+  // Stream URLs
   const host = window.location.hostname;
-  const url1 = data.mjpeg_url_cam1.replace("{host}", host);
-  const url2 = data.mjpeg_url_cam2.replace("{host}", host);
-  mjpegUrl1.href = url1;
+  const url1 = data.stream_url_cam1.replace("{host}", host);
+  const url2 = data.stream_url_cam2.replace("{host}", host);
+  const url3 = data.stream_url_cam3.replace("{host}", host);
   mjpegUrl1.textContent = url1;
-  mjpegUrl2.href = url2;
   mjpegUrl2.textContent = url2;
+  mjpegUrl3.textContent = url3;
   cam1Clients.textContent = String(data.cam1_clients ?? 0);
   cam2Clients.textContent = String(data.cam2_clients ?? 0);
+  cam3Clients.textContent = String(data.cam3_clients ?? 0);
 
   // Plugin info
   if (data.active_plugin !== undefined) {
@@ -202,20 +312,26 @@ function updateUI(data) {
   }
 
   if (viewMode === "single") {
-    const streamUrl = currentCam === 1 ? url1 : url2;
+    const urlByCam = { 1: url1, 2: url2, 3: url3 };
+    const streamUrl = urlByCam[currentCam];
     if (isStreaming) {
-      if (!mjpegStream.src.includes(streamUrl)) {
+      if (!streamCam1Single.isConnectedTo(streamUrl)) {
         waitingForFirstFrame = true;
         showOverlay("Starting camera…", true);
-        const reloadUrl = `${streamUrl}${streamUrl.includes("?") ? "&" : "?"}reload=${Date.now()}`;
-        mjpegStream.src = reloadUrl;
+        streamCam1Single.connect(streamUrl, {
+          onOpen: () => mjpegStream.classList.add("active"),
+          onFirstFrame: () => { waitingForFirstFrame = false; hideOverlay(); },
+          onClose: () => {
+            if (streamCam1Single.isConnectedTo(streamUrl)) {
+              waitingForFirstFrame = true;
+              showOverlay("Waiting for camera…", true);
+            }
+          },
+        });
       }
-      mjpegStream.classList.add("active");
-      if (!waitingForFirstFrame) hideOverlay();
     } else {
       waitingForFirstFrame = false;
-      mjpegStream.classList.remove("active");
-      mjpegStream.removeAttribute("src");
+      streamCam1Single.disconnect();
       showOverlay("Stream not active", false);
     }
   } else {
@@ -225,21 +341,24 @@ function updateUI(data) {
 }
 
 function renderDualCamera(camId, streamUrl, isStreaming) {
-  const img = camId === 1 ? mjpegStreamCam1 : mjpegStreamCam2;
-  if (!img) return;
+  const canvas = camId === 1 ? mjpegStreamCam1 : mjpegStreamCam2;
+  const mgr = camId === 1 ? streamCam1Dual : streamCam2Dual;
+  if (!canvas) return;
 
   if (!isStreaming) {
-    img.classList.remove("active");
-    img.removeAttribute("src");
+    mgr.disconnect();
     showDualOverlay(camId, `Camera ${camId} not active`);
     return;
   }
 
-  if (!img.src.includes(streamUrl)) {
-    img.src = streamUrl;
+  if (!mgr.isConnectedTo(streamUrl)) {
     showDualOverlay(camId, `Camera ${camId} loading…`);
+    mgr.connect(streamUrl, {
+      onOpen: () => canvas.classList.add("active"),
+      onFirstFrame: () => hideDualOverlay(camId),
+      onClose: () => showDualOverlay(camId, `Camera ${camId} waiting…`),
+    });
   }
-  img.classList.add("active");
 }
 
 // ── Controls ─────────────────────────────────────────────────────────────────
@@ -256,6 +375,13 @@ btnCam2.addEventListener("click", () => {
   waitingForFirstFrame = true;
   showOverlay("Switching camera…", true);
   send({ type: "switch_camera", cam_id: 2 });
+});
+
+btnCam3.addEventListener("click", () => {
+  if (currentCam === 3) return;
+  waitingForFirstFrame = true;
+  showOverlay("Switching camera…", true);
+  send({ type: "switch_camera", cam_id: 3 });
 });
 
 btnStartCam1.addEventListener("click", () => {
@@ -284,9 +410,27 @@ btnStopCam2.addEventListener("click", () => {
   }
 });
 
+btnStartCam3.addEventListener("click", () => {
+  showOverlay("Starting camera 3…", true);
+  send({ type: "start_stream", cam_id: 3 });
+});
+
+btnStopCam3.addEventListener("click", () => {
+  send({ type: "stop_stream", cam_id: 3 });
+  if (currentCam === 3 && viewMode === "single") {
+    waitingForFirstFrame = false;
+    showOverlay("Stream not active", false);
+  }
+});
+
 btnViewSingle.addEventListener("click", () => {
   viewMode = "single";
   applyViewMode();
+  // Drop the now-hidden dual-view connections instead of leaving them
+  // running unseen in the background — a WS connection, unlike an <img
+  // src>, isn't implicitly paused just because its container is hidden.
+  streamCam1Dual.disconnect();
+  streamCam2Dual.disconnect();
   waitingForFirstFrame = true;
   showOverlay("Switching to single view…", true);
 });
@@ -294,28 +438,7 @@ btnViewSingle.addEventListener("click", () => {
 btnViewBoth.addEventListener("click", () => {
   viewMode = "both";
   applyViewMode();
-});
-
-mjpegStream.addEventListener("load", () => {
-  waitingForFirstFrame = false;
-  hideOverlay();
-});
-
-mjpegStream.addEventListener("error", () => {
-  if (!mjpegStream.src) return;
-  waitingForFirstFrame = true;
-  showOverlay("Waiting for camera…", true);
-});
-
-mjpegStreamCam1.addEventListener("load", () => { hideDualOverlay(1); });
-mjpegStreamCam2.addEventListener("load", () => { hideDualOverlay(2); });
-mjpegStreamCam1.addEventListener("error", () => {
-  if (!mjpegStreamCam1.src) return;
-  showDualOverlay(1, "Camera 1 waiting…");
-});
-mjpegStreamCam2.addEventListener("error", () => {
-  if (!mjpegStreamCam2.src) return;
-  showDualOverlay(2, "Camera 2 waiting…");
+  streamCam1Single.disconnect();
 });
 
 // ── Plugin Controls ─────────────────────────────────────────────────────────
@@ -508,7 +631,7 @@ btnApplyPlugin.addEventListener("click", () => {
 
   // All plugins are processors — always instant, no stream restart
   setApplyLoading(true, "Applying…");
-  send({ type: "switch_plugin", plugin_name: pluginName, config: config });
+  send({ type: "switch_plugin", plugin_name: pluginName, config: config, cam_id: currentCam });
   pluginApplyTimer = setTimeout(finishApply, 1000);
 });
 

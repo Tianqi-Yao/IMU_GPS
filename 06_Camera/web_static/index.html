@@ -23,7 +23,7 @@
     <!-- Video Display -->
     <div class="video-container">
       <div id="singleView" class="single-view">
-        <img id="mjpegStream" class="mjpeg-img" alt="Camera stream" />
+        <canvas id="mjpegStream" class="mjpeg-img"></canvas>
         <div class="video-overlay" id="videoOverlay">
           <div class="overlay-spinner" id="overlaySpinner"></div>
           <span id="videoOverlayText">Stream not active</span>
@@ -33,14 +33,14 @@
       <div id="dualView" class="dual-view hidden">
         <div class="dual-cam-card">
           <div class="dual-cam-title">Camera 1</div>
-          <img id="mjpegStreamCam1" class="mjpeg-img" alt="Camera 1 stream" />
+          <canvas id="mjpegStreamCam1" class="mjpeg-img"></canvas>
           <div class="video-overlay" id="videoOverlayCam1">
             <span>Camera 1 not active</span>
           </div>
         </div>
         <div class="dual-cam-card">
           <div class="dual-cam-title">Camera 2</div>
-          <img id="mjpegStreamCam2" class="mjpeg-img" alt="Camera 2 stream" />
+          <canvas id="mjpegStreamCam2" class="mjpeg-img"></canvas>
           <div class="video-overlay" id="videoOverlayCam2">
             <span>Camera 2 not active</span>
           </div>
@@ -57,6 +57,7 @@
         <div class="cam-select">
           <button class="cam-btn active" id="btnCam1" data-cam="1">Camera 1</button>
           <button class="cam-btn" id="btnCam2" data-cam="2">Camera 2</button>
+          <button class="cam-btn" id="btnCam3" data-cam="3" title="Webcam">Camera 3</button>
         </div>
         <div class="cam-select view-mode">
           <button class="cam-btn active" id="btnViewSingle">Single</button>
@@ -102,12 +103,12 @@
         </div>
       </div>
 
-      <!-- MJPEG URLs -->
+      <!-- Stream URLs -->
       <div class="panel-section">
-        <h3>MJPEG URLs</h3>
+        <h3>Stream URLs</h3>
         <div class="data-row url-row">
           <span class="label">Cam 1</span>
-          <a class="value url-link" id="mjpegUrl1" href="#" target="_blank">—</a>
+          <span class="value url-link" id="mjpegUrl1">—</span>
         </div>
         <div class="data-row">
           <span class="label">Cam 1 Clients</span>
@@ -119,7 +120,7 @@
         </div>
         <div class="data-row url-row">
           <span class="label">Cam 2</span>
-          <a class="value url-link" id="mjpegUrl2" href="#" target="_blank">—</a>
+          <span class="value url-link" id="mjpegUrl2">—</span>
         </div>
         <div class="data-row">
           <span class="label">Cam 2 Clients</span>
@@ -128,6 +129,18 @@
         <div class="button-group compact-group">
           <button class="btn-start" id="btnStartCam2">Start C2</button>
           <button class="btn-stop" id="btnStopCam2">Stop C2</button>
+        </div>
+        <div class="data-row url-row">
+          <span class="label">Cam 3 (Webcam)</span>
+          <span class="value url-link" id="mjpegUrl3">—</span>
+        </div>
+        <div class="data-row">
+          <span class="label">Cam 3 Clients</span>
+          <span class="value" id="cam3Clients">0</span>
+        </div>
+        <div class="button-group compact-group">
+          <button class="btn-start" id="btnStartCam3">Start C3</button>
+          <button class="btn-stop" id="btnStopCam3">Stop C3</button>
         </div>
       </div>
 
