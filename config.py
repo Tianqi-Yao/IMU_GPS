@@ -113,8 +113,8 @@ AUTONAV_MANUAL_SPEED        = 0.4    # m/s used for idle-state manual drive comm
 AUTONAV_ARRIVE_FRAMES       = 1      # consecutive in-tolerance control frames required to confirm arrival (1 = no debounce)
 
 # Waypoint generation from a recorded manual run (see scripts/build_waypoints_from_run.py)
-WAYPOINT_MIN_DISTANCE_M  = 1.0                      # min spacing between generated waypoints (meters); controls WP density
-WAYPOINT_MIN_FIX_QUALITY = 1                        # minimum RTK fix_quality to accept a sample
+WAYPOINT_MIN_DISTANCE_M  = 5.0                      # min spacing between generated waypoints (meters); controls WP density
+WAYPOINT_MIN_FIX_QUALITY = 4                        # minimum RTK fix_quality to accept a sample
 
 
 # ══════════════════════════════════════════════════════════════════════════════
