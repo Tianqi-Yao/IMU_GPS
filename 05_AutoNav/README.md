@@ -153,7 +153,8 @@ are ignored by the loader.
   02_RTK's normal ports, for developing this bridge without hardware. Point
   `IMU_JSONL`/`RTK_JSONL` at a matched recording pair before using it.
 - `build_waypoints_from_run.py` — turns a recorded manual drive
-  (04_Robot's `data_log/run_*.jsonl`) into a downsampled waypoint CSV.
+  (`waypoint_runs/recordings/run_*.jsonl`, produced by 04_Robot's GEN CSV
+  feature or its recording toggle) into a downsampled waypoint CSV.
 
 ## Run
 

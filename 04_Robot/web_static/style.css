@@ -140,6 +140,21 @@ html, body {
 #rec-btn.rec-active { background: #2a0808; color: var(--red);  border: 1px solid var(--red); box-shadow: 0 0 5px rgba(255,64,96,0.3); }
 #rec-filename { color: var(--dim); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
 
+/* Generate-waypoints button — compact */
+#gen-btn {
+  padding: 5px 10px;
+  border: none; outline: none;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 11px; font-weight: bold; letter-spacing: 1px;
+  cursor: pointer; border-radius: 3px;
+  transition: background 0.2s; white-space: nowrap; flex-shrink: 0;
+}
+#gen-btn.gen-idle { background: #1e2d3d; color: var(--dim);   border: 1px solid var(--border); }
+#gen-btn.gen-busy { background: #2a2408; color: #ffcc00;      border: 1px solid #ffcc00; opacity: 0.8; }
+#gen-btn.gen-ok   { background: #082a12; color: var(--green); border: 1px solid var(--green); }
+#gen-btn.gen-err  { background: #2a0808; color: var(--red);   border: 1px solid var(--red); }
+#gen-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 #panel-toggle-btn {
   padding: 4px 7px;
   border: 1px solid var(--border); border-radius: 3px;

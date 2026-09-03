@@ -1,6 +1,6 @@
 """build_waypoints_from_run.py — generate a waypoint CSV from a recorded manual run.
 
-Reads the most recent 04_Robot/data_log/run_*.jsonl (produced by
+Reads the most recent waypoint_runs/recordings/run_*.jsonl (produced by
 robot_bridge.py's own "set_recording" feature — drive the route manually
 with recording on, then run this script), keeps only RTK samples meeting
 WAYPOINT_MIN_FIX_QUALITY, greedily downsamples them so consecutive
@@ -31,7 +31,7 @@ import autonav_algo as algo
 MIN_DISTANCE_M = _cfg.WAYPOINT_MIN_DISTANCE_M if _cfg else 1.0
 MIN_FIX_QUALITY = _cfg.WAYPOINT_MIN_FIX_QUALITY if _cfg else 1
 
-ROBOT_DATA_LOG_DIR = Path(__file__).parent.parent / "04_Robot" / "data_log"
+ROBOT_DATA_LOG_DIR = Path(__file__).parent.parent / "waypoint_runs" / "recordings"
 OUTPUT_DIR = Path(__file__).parent / "data_log"
 
 
@@ -102,22 +102,36 @@ def _write_waypoint_csv(waypoints: List[RtkSample], out_path: Path) -> None:
             f.write(f"{wp.lat:.8f},{wp.lon:.8f},,\n")
 
 
-def main() -> None:
-    run_path = _find_latest_run_file()
+def generate_from_run(run_path: Path, output_dir: Path):
+    """Load RTK samples from run_path, downsample, and write a waypoint CSV into output_dir.
+
+    Returns (out_path, waypoint_count, path_length_m). Raises ValueError if no usable
+    RTK samples are found.
+    """
     samples = _load_rtk_samples(run_path)
     if not samples:
-        raise SystemExit(f"No usable RTK samples (fix_quality >= {MIN_FIX_QUALITY}) found in {run_path}")
+        raise ValueError(f"No usable RTK samples (fix_quality >= {MIN_FIX_QUALITY}) found in {run_path}")
 
     waypoints = _downsample(samples, MIN_DISTANCE_M)
     length_m = _path_length_m(samples)
 
     run_ts = run_path.stem.replace("run_", "")
     density = f"{MIN_DISTANCE_M:g}"
-    out_path = OUTPUT_DIR / f"path_{run_ts}_{density}m.csv"
+    out_path = output_dir / f"path_{run_ts}_{density}m.csv"
     _write_waypoint_csv(waypoints, out_path)
 
-    print(f"Source run: {run_path} ({len(samples)} RTK samples, {length_m:.1f} m path length)")
-    print(f"Wrote {len(waypoints)} waypoint(s) to {out_path}")
+    return out_path, len(waypoints), length_m
+
+
+def main() -> None:
+    run_path = _find_latest_run_file()
+    try:
+        out_path, n_waypoints, length_m = generate_from_run(run_path, OUTPUT_DIR)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+    print(f"Source run: {run_path} ({length_m:.1f} m path length)")
+    print(f"Wrote {n_waypoints} waypoint(s) to {out_path}")
     print("NOTE: 'type'/'lift' columns are blank — edit manually to mark alley/pause/lift waypoints.")
 
 

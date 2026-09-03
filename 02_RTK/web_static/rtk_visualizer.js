@@ -71,7 +71,7 @@ function t(key, vars = {}) {
 
 const map = L.map('map').setView(DEFAULT_POS, 19);
 
-const offlineLayer = L.tileLayer('./assets/tiles/{z}/{x}/{y}.png', {
+const offlineLayer = L.tileLayer('./assets/tiles/{z}/{x}/{y}.jpg', {
   maxZoom: 20,
   attribution: 'Offline tiles (LAN/local)',
 });

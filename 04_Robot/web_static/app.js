@@ -61,6 +61,36 @@ function handleRecStatus(msg) {
     btn.className   = 'rec-idle';
     filename.textContent = '—';
   }
+  document.getElementById('gen-btn').disabled = isRecording;
+}
+
+function triggerGenerateWaypoints() {
+  const btn = document.getElementById('gen-btn');
+  btn.className = 'gen-busy';
+  btn.disabled = true;
+  btn.textContent = 'GENERATING…';
+  sendMsg({ type: "generate_waypoints" });
+}
+
+let genResetTimer = null;
+function handleWaypointsStatus(msg) {
+  const btn = document.getElementById('gen-btn');
+  btn.disabled = isRecording;
+  if (msg.ok) {
+    btn.className = 'gen-ok';
+    btn.textContent = `✓ ${msg.waypoint_count} PTS`;
+    btn.title = msg.filename;
+  } else {
+    btn.className = 'gen-err';
+    btn.textContent = '✗ FAILED';
+    btn.title = msg.message;
+  }
+  clearTimeout(genResetTimer);
+  genResetTimer = setTimeout(() => {
+    btn.className = 'gen-idle';
+    btn.textContent = 'GEN CSV';
+    btn.title = '';
+  }, msg.ok ? 3000 : 5000);
 }
 
 // ── WebSocket ───────────────────────────────────────────────
@@ -90,6 +120,7 @@ function connect() {
         odom:         handleOdom,
         state_status: handleStateStatus,
         rec_status:   handleRecStatus,
+        waypoints_status: handleWaypointsStatus,
       };
       const handler = handlers[msg.type];
       if (handler) handler(msg);
@@ -229,6 +260,11 @@ window.addEventListener('load', () => {
   const recBtn = document.getElementById('rec-btn');
   recBtn.addEventListener('click', toggleRecording);
   recBtn.addEventListener('touchend', (e) => { e.preventDefault(); toggleRecording(); });
+
+  // GEN CSV button
+  const genBtn = document.getElementById('gen-btn');
+  genBtn.addEventListener('click', triggerGenerateWaypoints);
+  genBtn.addEventListener('touchend', (e) => { e.preventDefault(); triggerGenerateWaypoints(); });
 
   // Speed slider
   const speedSlider = document.getElementById('speed-slider');

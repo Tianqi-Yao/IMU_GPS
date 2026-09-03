@@ -25,6 +25,7 @@ Run: python robot_bridge.py
 
 import asyncio
 import json
+import shutil
 import sys
 import threading
 import time
@@ -44,6 +45,11 @@ try:
     import config as _cfg
 except ImportError:
     _cfg = None
+
+AUTONAV_DIR = ROOT / "05_AutoNav"
+if str(AUTONAV_DIR) not in sys.path:
+    sys.path.insert(0, str(AUTONAV_DIR))
+import build_waypoints_from_run as bwr
 
 from common.http_server import StaticFileServer
 from common.logging_setup import setup_logger
@@ -70,6 +76,20 @@ DEFAULT_RTK_WS_URL = _cfg.ROBOT_RTK_WS if _cfg else "ws://localhost:8776"
 
 logger = setup_logger(__name__, str(Path(__file__).parent / "robot_bridge.log"))
 
+WAYPOINT_RUNS_DIR = ROOT / "waypoint_runs"
+RECORDINGS_DIR = WAYPOINT_RUNS_DIR / "recordings"
+CSV_DIR = WAYPOINT_RUNS_DIR / "csv"
+
+
+def _archive_existing(dir_path: Path) -> None:
+    """Move any file currently sitting directly in dir_path into dir_path/archive/."""
+    dir_path.mkdir(parents=True, exist_ok=True)
+    archive_dir = dir_path / "archive"
+    archive_dir.mkdir(exist_ok=True)
+    for f in dir_path.iterdir():
+        if f.is_file():
+            shutil.move(str(f), str(archive_dir / f.name))
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # BLOCK 1 — DATA MODEL / RECORDING
@@ -77,7 +97,7 @@ logger = setup_logger(__name__, str(Path(__file__).parent / "robot_bridge.log"))
 class Recorder:
     """Rate-limited, per-type-slimmed jsonl recorder for manual test runs."""
 
-    LOG_DIR = Path(__file__).parent / "data_log"
+    LOG_DIR = RECORDINGS_DIR
 
     def __init__(self, interval: float = 1.0) -> None:
         self._interval = interval
@@ -93,7 +113,7 @@ class Recorder:
     def start(self) -> str:
         if self.active:
             return self.filename
-        self.LOG_DIR.mkdir(parents=True, exist_ok=True)
+        _archive_existing(self.LOG_DIR)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.filename = f"run_{ts}.jsonl"
         path = self.LOG_DIR / self.filename
@@ -512,6 +532,26 @@ class RobotBridge:
             else:
                 self._recorder.stop()
                 await self._broadcast({"type": "rec_status", "recording": False, "filename": ""})
+        elif msg_type == "generate_waypoints":
+            if self._recorder.active:
+                await self._broadcast({"type": "waypoints_status", "ok": False, "message": "请先停止录制"})
+            else:
+                try:
+                    result = await loop.run_in_executor(None, self._generate_waypoints)
+                    await self._broadcast({"type": "waypoints_status", "ok": True, **result})
+                except Exception as exc:
+                    await self._broadcast({"type": "waypoints_status", "ok": False, "message": str(exc)})
+
+    def _generate_waypoints(self) -> dict:
+        run_files = list(RECORDINGS_DIR.glob("run_*.jsonl"))
+        if not run_files:
+            raise RuntimeError("未找到录制文件，请先录制一段路线")
+        latest_run = max(run_files, key=lambda p: p.stat().st_mtime)
+
+        _archive_existing(CSV_DIR)
+        out_path, n_waypoints, length_m = bwr.generate_from_run(latest_run, CSV_DIR)
+
+        return {"filename": out_path.name, "waypoint_count": n_waypoints, "length_m": length_m}
 
     def _on_serial_line(self, line: bytes) -> None:
         """Runs on the serial reader thread; schedules async work on the event loop."""

@@ -15,12 +15,20 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 EARTH_RADIUS_M = 6371008.8 # mean Earth radius in meters
-LAT = 38.895947453028825
-LON = -92.2075686338995
-RADIUS_MILES = 0.5
+LAT = 33.94127372
+LON = -92.31879115
+RADIUS_MILES = 0.1
 ZOOM_MIN = 1
-ZOOM_MAX = 19
-URL_TEMPLATE = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+# Esri World Imagery's tile scheme (see MapServer?f=json -> tileInfo.lods) goes up to
+# level 23 (~1.9cm/px), but that resolution is only actually present in select urban
+# areas — most locations (including rural ones) have no native imagery above ~z19-20
+# and Esri just upsamples/blurs higher levels. 19 matches the OSM street layer's max
+# and keeps tile counts reasonable; raise it if you know the area has finer imagery.
+ZOOM_MAX = 20
+# Esri World Imagery (satellite) — same source used by rtk_visualizer.js's esriSatLayer.
+# Tile URL is {z}/{y}/{x} (note the order), but files are still saved as z/x/y below to
+# match what the offline Leaflet layer (./assets/tiles/{z}/{x}/{y}.png) expects.
+URL_TEMPLATE = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 OUT_DIR = Path(__file__).resolve().parents[1] / "web_static" / "assets" / "tiles"
 TIMEOUT = 10.0
 RETRIES = 2
@@ -94,7 +102,7 @@ def main() -> None:
         for x in range(xmin, xmax + 1):
             for y in range(ymin, ymax + 1):
                 total += 1
-                out_path = OUT_DIR / str(z) / str(x) / f"{y}.png"
+                out_path = OUT_DIR / str(z) / str(x) / f"{y}.jpg"
                 if out_path.exists() and not OVERWRITE:
                     skipped += 1
                     continue

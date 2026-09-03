@@ -137,8 +137,9 @@ Pure Pursuit(没有前视点选择——它始终直接瞄准当前航点)。这
 - `replay_imu_rtk.py` —— 在 01_IMU/02_RTK 各自正常的端口上提供固定的
   IMU+RTK 基准文件,便于在没有硬件的情况下开发本 bridge。使用前把
   `IMU_JSONL`/`RTK_JSONL` 指向一对匹配的录制文件。
-- `build_waypoints_from_run.py` —— 把一次录制的手动驾驶(04_Robot 的
-  `data_log/run_*.jsonl`)转换成一份降采样的航点 CSV。
+- `build_waypoints_from_run.py` —— 把一次录制的手动驾驶
+  (`waypoint_runs/recordings/run_*.jsonl`，由 04_Robot 的 GEN CSV 按钮或
+  录制开关生成)转换成一份降采样的航点 CSV。
 
 ## 运行
 

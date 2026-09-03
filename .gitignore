@@ -10,6 +10,7 @@ CLAUDE.md
 doc/*
 
 data_log
+waypoint_runs
 07_SysMon/sysmon_data
 
 06_Camera/web_static/snapshots/*.html
