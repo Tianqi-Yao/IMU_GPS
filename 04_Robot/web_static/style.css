@@ -154,6 +154,7 @@ html, body {
 #gen-btn.gen-ok   { background: #082a12; color: var(--green); border: 1px solid var(--green); }
 #gen-btn.gen-err  { background: #2a0808; color: var(--red);   border: 1px solid var(--red); }
 #gen-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+#gen-status { color: var(--dim); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 160px; }
 
 #panel-toggle-btn {
   padding: 4px 7px;

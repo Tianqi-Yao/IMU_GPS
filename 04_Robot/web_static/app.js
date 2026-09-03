@@ -65,32 +65,30 @@ function handleRecStatus(msg) {
 }
 
 function triggerGenerateWaypoints() {
-  const btn = document.getElementById('gen-btn');
+  const btn    = document.getElementById('gen-btn');
+  const status = document.getElementById('gen-status');
   btn.className = 'gen-busy';
   btn.disabled = true;
   btn.textContent = 'GENERATING…';
+  status.textContent = '生成中…';
+  status.title = '';
   sendMsg({ type: "generate_waypoints" });
 }
 
-let genResetTimer = null;
 function handleWaypointsStatus(msg) {
-  const btn = document.getElementById('gen-btn');
+  const btn    = document.getElementById('gen-btn');
+  const status = document.getElementById('gen-status');
+  btn.textContent = 'GEN CSV';
   btn.disabled = isRecording;
   if (msg.ok) {
     btn.className = 'gen-ok';
-    btn.textContent = `✓ ${msg.waypoint_count} PTS`;
-    btn.title = msg.filename;
+    status.textContent = `✓ ${msg.waypoint_count}点 · ${msg.filename}`;
+    status.title = msg.filename;
   } else {
     btn.className = 'gen-err';
-    btn.textContent = '✗ FAILED';
-    btn.title = msg.message;
+    status.textContent = `✗ ${msg.message}`;
+    status.title = msg.message;
   }
-  clearTimeout(genResetTimer);
-  genResetTimer = setTimeout(() => {
-    btn.className = 'gen-idle';
-    btn.textContent = 'GEN CSV';
-    btn.title = '';
-  }, msg.ok ? 3000 : 5000);
 }
 
 // ── WebSocket ───────────────────────────────────────────────
