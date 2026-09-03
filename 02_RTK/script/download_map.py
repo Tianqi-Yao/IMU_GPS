@@ -15,8 +15,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 EARTH_RADIUS_M = 6371008.8 # mean Earth radius in meters
-LAT = 33.94127372
-LON = -92.31879115
+LAT = 38.90744658660293
+LON = -92.27985398182447
 RADIUS_MILES = 0.1
 ZOOM_MIN = 1
 # Esri World Imagery's tile scheme (see MapServer?f=json -> tileInfo.lods) goes up to
